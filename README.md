@@ -1,5 +1,15 @@
 # Reinforcement Learning with Random Delays
 
+### Virtual environment
+- python3.11 -m venv .venv
+- source .venv/bin/activate
+- which python
+- pip install -e ../gym
+- pip install --upgrade pip
+- pip install -e .
+- python -c "import pandas; print(pandas.__version__)"
+
+
 PyTorch implementation of our paper [Reinforcement Learning with Random Delays (ICLR 2020)](https://openreview.net/forum?id=QFYnKlBJYR) – [[Arxiv]](https://arxiv.org/abs/2010.02966)
 
 ### Getting Started

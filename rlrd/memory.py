@@ -26,7 +26,7 @@ class Memory:
                 store = not info.get('TimeLimit.truncated', False) and not info.get('reset', False)
 
             if store:
-                self.memory.append((self.last_observation, self.last_action, r, obs, done))
+                self.memory.append((self.last_observation, self.last_action, r, obs, done, info))
 
         self.last_observation = obs
         self.last_action = action
@@ -64,13 +64,13 @@ class TrajMemory:
         self.remove_size = remove_size
 
     def append(self, r, done, info, obs, h, action):
-        self.history.append((r, obs, h, action))
+        self.history.append((r, obs, h, action, info))
         if not self.keep_reset_transitions and (info.get('TimeLimit.truncated', False) or info.get('reset', False)):
             self.history.clear()
 
         if len(self.history) == self.history.maxlen:
-            (_, *r), m, h, a = zip(*self.history)
-            self.memory.append((m, h, a, r, done))
+            (_, *r), m, h, a, i = zip(*self.history)
+            self.memory.append((m, h, a, r, done, i[-1]))
 
         if done:
             self.history.clear()
@@ -109,13 +109,13 @@ class TrajMemoryNoHidden:
         self.remove_size = remove_size
 
     def append(self, r, done, info, obs, action):
-        self.history.append((r, obs, action))
+        self.history.append((r, obs, action, info))
         if not self.keep_reset_transitions and (info.get('TimeLimit.truncated', False) or info.get('reset', False)):
             self.history.clear()
 
         if len(self.history) == self.history.maxlen:
-            (_, *r), m, a = zip(*self.history)
-            self.memory.append((m, a, r, done))
+            (_, *r), m, a, i = zip(*self.history)
+            self.memory.append((m, a, r, done, i[-1]))
 
         if done:
             self.history.clear()

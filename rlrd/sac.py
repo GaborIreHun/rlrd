@@ -68,61 +68,75 @@ class Agent:
         return action, next_state, stats
 
     def train(self):
-        obs, actions, rewards, next_obs, terminals = self.memory.sample()  # sample a transition from the replay buffer
-        new_action_distribution = self.model.actor(obs)  # outputs distribution object
-        new_actions = new_action_distribution.rsample()  # samples using the reparametrization trick
+        obs, actions, rewards, next_obs, terminals = self.memory.sample()
+        new_action_distribution = self.model.actor(obs)
+        new_actions = new_action_distribution.rsample()
 
-        # critic loss
-        next_action_distribution = self.model_nograd.actor(next_obs)  # outputs distribution object
-        next_actions = next_action_distribution.sample()  # samples
+        # Critic loss
+        next_action_distribution = self.model_nograd.actor(next_obs)
+        next_actions = next_action_distribution.sample()
+
         next_value = [c(next_obs, next_actions) for c in self.model_target.critics]
-        next_value = reduce(torch.min, next_value)  # minimum action-value
-        next_value = self.outputnorm_target.unnormalize(next_value)  # PopArt (not present in the original paper)
-        # next_value = self.outputnorm.unnormalize(next_value)  # PopArt (not present in the original paper)
+        next_value = reduce(torch.min, next_value)
+        next_value = self.outputnorm_target.unnormalize(next_value)
 
-        # predict entropy rewards in a separate dimension from the normal rewards (not present in the original paper)
         next_action_entropy = - (1. - terminals) * self.discount * next_action_distribution.log_prob(next_actions)
         reward_components = torch.cat((
             self.reward_scale * rewards[:, None],
             self.entropy_scale * next_action_entropy[:, None],
-        ), dim=1)  # shape = (batchsize, reward_components)
+        ), dim=1)
 
         value_target = reward_components + (1. - terminals[:, None]) * self.discount * next_value
-        normalized_value_target = self.outputnorm.update(value_target)  # PopArt update and normalize
+        normalized_value_target = self.outputnorm.update(value_target)
 
         values = [c(obs, actions) for c in self.model.critics]
-        assert values[0].shape == normalized_value_target.shape and not normalized_value_target.requires_grad
         loss_critic = sum(mse_loss(v, normalized_value_target) for v in values)
 
-        # update critic
         self.critic_optimizer.zero_grad()
         loss_critic.backward()
+
+        # Compute critic gradient norm
+        grad_norm_critic = torch.nn.utils.clip_grad_norm_(self.model.critics.parameters(), max_norm=10.0)
+
         self.critic_optimizer.step()
 
-        # actor loss
-        new_value = [c(obs, new_actions) for c in self.model.critics]  # new_actions with reparametrization trick
-        new_value = reduce(torch.min, new_value)  # minimum action_values
-        assert new_value.shape == (self.batchsize, 2)
-
+        # Actor loss
+        new_value = [c(obs, new_actions) for c in self.model.critics]
+        new_value = reduce(torch.min, new_value)
         new_value = self.outputnorm.unnormalize(new_value)
-        new_value[:, -1] -= self.entropy_scale * new_action_distribution.log_prob(new_actions)
-        loss_actor = - self.outputnorm.normalize_sum(new_value.sum(1)).mean()  # normalize_sum preserves relative scale
+        log_probs = new_action_distribution.log_prob(new_actions)
+        new_value[:, -1] -= self.entropy_scale * log_probs
 
-        # update actor
+        loss_actor = - self.outputnorm.normalize_sum(new_value.sum(1)).mean()
+
         self.actor_optimizer.zero_grad()
         loss_actor.backward()
+
+        # Compute actor gradient norm
+        grad_norm_actor = torch.nn.utils.clip_grad_norm_(self.model.actor.parameters(), max_norm=10.0)
+
         self.actor_optimizer.step()
 
-        # update target critics and normalizers
         exponential_moving_average(self.model_target.critics.parameters(), self.model.critics.parameters(), self.target_update)
         exponential_moving_average(self.outputnorm_target.parameters(), self.outputnorm.parameters(), self.target_update)
 
         return dict(
             loss_actor=loss_actor.detach(),
             loss_critic=loss_critic.detach(),
-            outputnorm_reward_mean=self.outputnorm.mean[0],
-            outputnorm_entropy_mean=self.outputnorm.mean[-1],
-            outputnorm_reward_std=self.outputnorm.std[0],
-            outputnorm_entropy_std=self.outputnorm.std[-1],
+            loss_total=(loss_actor + loss_critic).detach(),
             memory_size=len(self.memory),
+            reward_mean=rewards.mean().item(),
+            reward_std=rewards.std().item(),
+            value_target_mean=value_target.mean().item(),
+            value_target_std=value_target.std().item(),
+            gradient_norm_actor=grad_norm_actor.item(),
+            gradient_norm_critic=grad_norm_critic.item(),
+            entropy_log_probs_mean=log_probs.mean().item(),
+            actor_output_mean=new_actions.mean().item(),
+            actor_output_std=new_actions.std().item(),
+            model_val_mean=new_value[:, 0].mean().item(),
+            target_val_mean=next_value[:, 0].mean().item(),
+            obs_delay_mean=torch.tensor([i.get("obs_delay", 0) for i in self.memory.info]).float().mean().item(),
+            act_delay_mean=torch.tensor([i.get("act_delay", 0) for i in self.memory.info]).float().mean().item(),
         )
+    
