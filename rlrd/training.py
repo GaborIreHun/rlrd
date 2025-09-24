@@ -30,6 +30,7 @@ class Training:
     def __post_init__(self):
         self.epoch = 0
         self.agent = self.Agent(self.Env)
+        self.best_reward = float('-inf')  # Track the best test reward
 
     def run_epoch(self):
         stats = []
@@ -61,29 +62,30 @@ class Training:
                     action, state, training_stats = self.agent.act(
                         state, *env.transition, train=True
                     )
+                    # print("DEBUG: training_stats =", training_stats)
+                    # print("DEBUG: type(training_stats) =", type(training_stats))
+
+                    # Skip this step entirely if training_stats is an empty list
+                    if isinstance(training_stats, list):
+                        if len(training_stats) == 0:
+                            continue  # Nothing to process this step
+                        training_stats = training_stats[0]
+                                    
                     env.step(action)
 
-                    # Map list of stats
-                    names = [
-                        "loss_total", "loss_critic", "loss_actor", "memory_size",
-                        "reward_mean", "reward_std", "value_target_mean", "value_target_std",
-                        "gradient_norm_actor", "gradient_norm_critic", "entropy_log_probs_mean",
-                        "nstep_len_mean", "nstep_len_std", "obs_delay_mean", "act_delay_mean",
-                        "actor_output_mean", "actor_output_std", "model_val_mean", "target_val_mean"
-                    ]
-
                     clean = {}
-                    for name in names:
-                        v = training_stats.get(name, None)
-                        if v is None:
-                            continue
+
+                    for k, v in training_stats.items():
                         if isinstance(v, dict):
-                            clean.update({k: (vv.item() if torch.is_tensor(vv) else vv) for k, vv in v.items()})
+                            for sub_k, sub_v in v.items():
+                                clean_key = f"{k}.{sub_k}"
+                                clean[clean_key] = sub_v.item() if torch.is_tensor(sub_v) else sub_v
                         else:
-                            clean[name] = v.item() if torch.is_tensor(v) else v
+                            clean[k] = v.item() if torch.is_tensor(v) else v
 
                     stats_history.append(clean)
 
+                    # At the end of the epoch, save full epoch summary
                     save_stats(stats, filename=f"stats/experiment-1/summary_epoch_{self.epoch}.csv")
 
                     # Flush CSV every 100 steps
@@ -92,7 +94,14 @@ class Training:
 
 
                 # Build per-round summary from collected history
-                batch_summary = DataFrame(stats_history).mean(skipna=True).to_dict()
+                # Filter only scalar keys from each stat entry
+                scalar_stats_history = [
+                    {k: v for k, v in stat.items() if isinstance(v, (int, float))}
+                    for stat in stats_history
+                ]
+
+                batch_summary = pd.DataFrame(scalar_stats_history).mean(skipna=True).to_dict()
+
                 summary = pandas_dict(
                     **env.stats(),
                     round_time=Timestamp.utcnow() - t0,
@@ -103,5 +112,24 @@ class Training:
                 stats.append(summary)
                 print(summary.add_prefix("  ").to_string(), "\n")
 
+                # Save round-specific file
+                save_stats([summary], filename=f"stats/experiment-1/summary_epoch_{self.epoch}_round_{rnd}.csv")
+
+                # Save best model based on test reward
+                reward = summary.get('reward_mean_test', None)
+                if reward is not None and reward > self.best_reward:
+                    self.best_reward = reward
+                    torch.save(self.agent.model.state_dict(), f"checkpoints/best_model.pt")
+                    print(f"New best model saved with reward_mean_test = {reward:.4f}")
+
+
         self.epoch += 1
+
+        # Save model after epoch
+        os.makedirs("checkpoints", exist_ok=True)
+        torch.save(self.agent.model.state_dict(), f"checkpoints/sac_model_epoch_{self.epoch}.pt")
+
+        # Final per-epoch summary
+        save_stats(stats, filename=f"stats/experiment-1/summary_epoch_{self.epoch}.csv")
+
         return stats

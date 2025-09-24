@@ -63,11 +63,15 @@ class Agent:
             while self.total_updates < int(total_updates_target):
                 if self.total_updates == 0:
                     print("starting training")
-                stats += self.train(),
+                stats += [self.train()]
                 self.total_updates += 1
         return action, next_state, stats
 
     def train(self):
+        # Skip training if not enough memory
+        if len(self.memory) < self.batchsize:
+            return {}
+        
         obs, actions, rewards, next_obs, terminals = self.memory.sample()
         new_action_distribution = self.model.actor(obs)
         new_actions = new_action_distribution.rsample()

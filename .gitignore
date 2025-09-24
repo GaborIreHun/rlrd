@@ -104,3 +104,9 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# CSV
+*.csv
+
+# PT Files
+*.pt

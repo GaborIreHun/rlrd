@@ -95,3 +95,20 @@ We did not yet optimize our python implementation of DC/AC, this is the most imp
 
 In particular, a lot of time is wasted when artificially re-creating a batched tensor for computing the value estimates in one forward pass, and the replay buffer is inefficient.
 See the `#FIXME` in [dcac.py](https://github.com/rmst/rlrd/blob/master/rlrd/dcac.py)
+
+# Experiment-1 Execution
+
+<!-- source /home/apa/Desktop/PHD/Research/rtrd/rlrd/.venv/bin/activate -->
+<!-- Activate virtual environment -->
+source .venv/bin/activate
+
+<!-- Run model -->
+python -m rlrd run rlrd:DcacTraining Env.id=Pendulum-v0 Env.min_observation_delay=0 Env.sup_observation_delay=1 Env.min_action_delay=0 Env.sup_action_delay=1
+
+<!--  -->
+<!-- python -m rlrd.evaluate --model ../checkpoints/sac_model_epoch_X.pt --env Pendulum-v0 --steps 2000 --seed 42 -->
+python -m rlrd.evaluate --model checkpoints/sac_model_epoch_10.pt --env Pendulum-v0 --steps 2000 --seed 42 --episodes 3 --min_observation_delay 0 --sup_observation_delay 1 --min_action_delay 0 --sup_action_delay 1
+
+
+
+
