@@ -2,7 +2,7 @@
 
 import torch
 from pandas import Timestamp
-from rlrd.envs import RandomDelayEnv
+from rlrd.envs import ENV_REGISTRY 
 from rlrd.wrappers import StatsWrapper
 from rlrd.dcac import Agent
 import argparse
@@ -13,15 +13,10 @@ from gym.wrappers import Monitor
 import numpy as np
 import csv
 
-def make_env(env_id, seed_val=0, min_observation_delay=0, sup_observation_delay=1, min_action_delay=0, sup_action_delay=1):
-    return RandomDelayEnv(
-        id=env_id,
-        seed_val=seed_val,
-        min_observation_delay=min_observation_delay,
-        sup_observation_delay=sup_observation_delay,
-        min_action_delay=min_action_delay,
-        sup_action_delay=sup_action_delay
-    )
+def make_env(env_id, seed_val=0, **kwargs):
+    if env_id not in ENV_REGISTRY:
+        raise ValueError(f"Unknown Env.id={env_id}. Available: {list(ENV_REGISTRY.keys())}")
+    return ENV_REGISTRY[env_id](seed_val=seed_val, id=env_id, **kwargs)
 
 def evaluate(
     model_path,
@@ -37,15 +32,14 @@ def evaluate(
     video_dir = "videos"
     os.makedirs(video_dir, exist_ok=True)
 
-    # Create delayed env config
-    env_ctor = partial(
-        make_env,
-        env_id=env_id,
-        min_observation_delay=min_observation_delay,
-        sup_observation_delay=sup_observation_delay,
-        min_action_delay=min_action_delay,
-        sup_action_delay=sup_action_delay
-    )
+    # Create env config
+    env_ctor = ENV_REGISTRY[env_id]
+
+    env = env_ctor(seed_val=seed, 
+               min_observation_delay=min_observation_delay,
+               sup_observation_delay=sup_observation_delay,
+               min_action_delay=min_action_delay,
+               sup_action_delay=sup_action_delay)
 
     # Load trained agent
     agent = Agent(env_ctor)

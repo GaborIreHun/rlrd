@@ -9,6 +9,8 @@ from rlrd.wrappers_rd import RandomDelayWrapper, WifiDelayWrapper1, WifiDelayWra
 import numpy as np
 import pickle
 from rlrd.batch_env import get_env_state
+from .gym_env import GymEnv
+from rlrd.simulator_env import RobotSimEnv
 
 
 def mujoco_py_issue_424_workaround():
@@ -134,3 +136,31 @@ def test_random_delay_env():
 
 if __name__ == '__main__':
     test_random_delay_env()
+
+# List of standard Gym / MuJoCo envs
+GYM_ENVS = [
+    "Pendulum-v0",
+    "HalfCheetah-v2",
+    "Ant-v2",
+    "Hopper-v2",
+    "Walker2d-v2",
+    "Humanoid-v2"
+]
+
+# ENV_REGISTRY creation
+ENV_REGISTRY = {
+    env_id: GymEnv for env_id in GYM_ENVS
+}
+
+for env_id in GYM_ENVS:
+    ENV_REGISTRY[f"RandomDelay-{env_id}"] = RandomDelayEnv
+
+# Custom simulation environments
+ENV_REGISTRY.update({
+    "SimEnv": RobotSimEnv,
+    "RandomDelayPendulum-v0": RandomDelayEnv
+    # "WebotsEnv": WebotsSimEnv,     # (if implemented)
+    # "CoppeliaEnv": CoppeliaSimEnv, # (if implemented)
+    # "PyBulletEnv": PyBulletEnv,    # (if implemented)
+    # "UnityEnv": UnityEnv,          # (if implemented)
+})

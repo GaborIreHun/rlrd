@@ -8,7 +8,8 @@ import rlrd.sac
 from rlrd.testing import Test
 from rlrd.util import pandas_dict
 from rlrd.wrappers import StatsWrapper
-from rlrd.envs import GymEnv
+# from rlrd.envs import GymEnv
+from rlrd.envs import ENV_REGISTRY
 
 # Utility to save training stats to CSV
 def save_stats(stats_list, filename="stats/experiment-1.csv"):
@@ -17,7 +18,7 @@ def save_stats(stats_list, filename="stats/experiment-1.csv"):
 
 @dataclass(eq=False)
 class Training:
-    Env: type = GymEnv
+    Env: str = "Pendulum-v0"   # default environment ID
     Test: type = Test
     Agent: type = rlrd.sac.Agent
     epochs: int = 10        # total number of epochs
@@ -36,8 +37,9 @@ class Training:
         stats = []
         state = None
 
+        env_ctor = ENV_REGISTRY[self.Env]   # pick constructor from registry
         with StatsWrapper(
-            self.Env(seed_val=self.seed + self.epoch),
+            env_ctor(seed_val=self.seed + self.epoch),
             window=self.stats_window or self.steps
         ) as env:
             for rnd in range(self.rounds):
@@ -51,7 +53,7 @@ class Training:
 
                 # run test in parallel (blocks until done)
                 test = self.Test(
-                    Env=self.Env,
+                    Env=lambda **kwargs: ENV_REGISTRY[self.Env](**kwargs),
                     actor=self.agent.model,
                     steps=self.stats_window or self.steps,
                     base_seed=self.seed + self.epochs
