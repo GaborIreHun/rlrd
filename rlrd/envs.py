@@ -9,8 +9,9 @@ from rlrd.wrappers_rd import RandomDelayWrapper, WifiDelayWrapper1, WifiDelayWra
 import numpy as np
 import pickle
 from rlrd.batch_env import get_env_state
-from .gym_env import GymEnv
+# from .gym_env import GymEnv
 from rlrd.simulator_env import RobotSimEnv
+from rlrd import wrappers as base_wrappers
 
 
 def mujoco_py_issue_424_workaround():
@@ -126,6 +127,37 @@ class RandomDelayEnv(Env):
         super().__init__(env)
 
 
+class RobotSimDelayEnv(Env):
+    def __init__(self,
+                 seed_val: int = 0,
+                 log_dir: str = "/tmp",
+                 min_observation_delay: int = 0,
+                 sup_observation_delay: int = 0,
+                 min_action_delay: int = 0,
+                 sup_action_delay: int = 0,
+                 instant_rewards: bool = True,
+                 store_env: bool = False):
+        if sup_observation_delay < min_observation_delay:
+            raise ValueError(f"sup_observation_delay ({sup_observation_delay}) must be >= min_observation_delay ({min_observation_delay})")
+        if sup_action_delay < min_action_delay:
+            raise ValueError(f"sup_action_delay ({sup_action_delay}) must be >= min_action_delay ({min_action_delay})")
+        env = RobotSimEnv(
+            seed_val=seed_val,
+            log_dir=log_dir,
+            min_obs_delay=min_observation_delay,
+            max_obs_delay=sup_observation_delay,
+            min_action_delay=min_action_delay,
+            max_action_delay=sup_action_delay
+        )
+        delay_env = base_wrappers.RandomDelayWrapper(
+            env,
+            obs_delay_range=range(min_observation_delay, sup_observation_delay + 1),
+            act_delay_range=range(min_action_delay, sup_action_delay + 1),
+            instant_rewards=instant_rewards
+        )
+        super().__init__(delay_env, store_env=store_env)
+
+
 def test_random_delay_env():
     env = RandomDelayEnv()
     obs = env.reset()
@@ -157,7 +189,7 @@ for env_id in GYM_ENVS:
 
 # Custom simulation environments
 ENV_REGISTRY.update({
-    "SimEnv": RobotSimEnv,
+    "SimEnv": RobotSimDelayEnv,
     "RandomDelayPendulum-v0": RandomDelayEnv
     # "WebotsEnv": WebotsSimEnv,     # (if implemented)
     # "CoppeliaEnv": CoppeliaSimEnv, # (if implemented)

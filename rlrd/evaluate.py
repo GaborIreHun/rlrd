@@ -12,6 +12,7 @@ from functools import partial
 from gym.wrappers import Monitor
 import numpy as np
 import csv
+import argparse
 
 def make_env(env_id, seed_val=0, **kwargs):
     if env_id not in ENV_REGISTRY:
@@ -27,7 +28,9 @@ def evaluate(
     sup_observation_delay=1,
     min_action_delay=0,
     sup_action_delay=1,
-    episodes=5
+    episodes=5,
+    log_dir="/tmp",
+    render_mode="human"
 ):
     video_dir = "videos"
     os.makedirs(video_dir, exist_ok=True)
@@ -35,11 +38,17 @@ def evaluate(
     # Create env config
     env_ctor = ENV_REGISTRY[env_id]
 
-    env = env_ctor(seed_val=seed, 
-               min_observation_delay=min_observation_delay,
-               sup_observation_delay=sup_observation_delay,
-               min_action_delay=min_action_delay,
-               sup_action_delay=sup_action_delay)
+    # === Handle environments that support delay arguments ===
+    delay_envs = ("RandomDelay-", "RandomDelay", "RandomDelayEnv")
+    if any(tag in env_id for tag in delay_envs):
+        env = env_ctor(seed_val=seed,
+                log_dir=args.log_dir,
+                min_observation_delay=min_observation_delay,
+                sup_observation_delay=sup_observation_delay,
+                min_action_delay=min_action_delay,
+                sup_action_delay=sup_action_delay)
+    else:
+        env = env_ctor(seed_val=seed, log_dir=log_dir)
 
     # Load trained agent
     agent = Agent(env_ctor)
@@ -66,7 +75,11 @@ def evaluate(
             print(f"Step {steps_taken}: action={action}")
             obs, reward, done, info = env.step(action)
             print(f"→ reward={reward}, done={done}") 
-            env.render()
+            if render_mode == "human":
+                env.render()
+                time.sleep(1 / 30)  # 30 FPS
+            elif render_mode == "video":
+                env.render(mode="rgb_array")  # In case your env captures frames
             time.sleep(1 / 30)  # ~30 FPS
             total_reward += reward
             steps_taken += 1
@@ -116,6 +129,9 @@ if __name__ == "__main__":
     parser.add_argument("--sup_observation_delay", type=int, default=1)
     parser.add_argument("--min_action_delay", type=int, default=0)
     parser.add_argument("--sup_action_delay", type=int, default=1)
+    parser.add_argument("--log_dir", type=str, default="/tmp")
+    parser.add_argument("--render_mode", type=str, default="human", choices=["human", "video", "none"])
+
     args = parser.parse_args()
 
     evaluate(
@@ -127,5 +143,7 @@ if __name__ == "__main__":
         min_observation_delay=args.min_observation_delay,
         sup_observation_delay=args.sup_observation_delay,
         min_action_delay=args.min_action_delay,
-        sup_action_delay=args.sup_action_delay
+        sup_action_delay=args.sup_action_delay,
+        log_dir=args.log_dir,
+        render_mode=args.render_mode
     )
