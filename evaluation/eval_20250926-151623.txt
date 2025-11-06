@@ -1,0 +1,7 @@
+Model: checkpoints/sac_model_epoch_1.pt
+Episodes: 3
+Mean Reward: -121.18
+Std Reward: 96.40
+Episode 1 Reward: -2.87
+Episode 2 Reward: -238.99
+Episode 3 Reward: -121.70
