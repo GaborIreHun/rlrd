@@ -16,6 +16,8 @@ from contextlib import nullcontext
 import pandas as pd
 import time
 from itertools import combinations
+import random
+import numpy as np
 
 @dataclass(eq=0)
 class Agent(rlrd.sac.Agent):
@@ -51,6 +53,34 @@ class Agent(rlrd.sac.Agent):
         self.traj_new_augm_obs = [None, ] * (self.act_buf_size + 1)
 
         self.is_training = False
+
+    def select_action(self, obs, deterministic=True):
+        """
+        Selects action from policy.
+        - If deterministic: uses the mean of the action distribution (for evaluation/simulation).
+        - If not: uses rsample() (for training/exploration).
+        """
+        self.model.eval()
+        obs_t = torch.as_tensor(obs, device=self.device).unsqueeze(0)
+        with torch.no_grad():
+            dist = self.model.actor(obs_t)
+            if deterministic:
+                # For distributions like Normal, mean is dist.mean; for others, adapt as needed.
+                action = dist.mean if hasattr(dist, "mean") else dist.loc
+            else:
+                action = dist.rsample()
+        # If action shape is (1, act_dim), squeeze it.
+        return action.cpu().numpy().squeeze()
+    
+    @staticmethod  
+    def set_global_seed(seed):
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
     def train(self):
         start_time = time.time()
@@ -450,4 +480,5 @@ class Agent(rlrd.sac.Agent):
 
             iteration_time = time.time() - start_time,
         )
+    
 

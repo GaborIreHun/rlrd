@@ -71,7 +71,7 @@ def evaluate(
         step_rewards = []
 
         while not done and steps_taken < steps:
-            action, state, _ = agent.act(state, obs, reward, done, info, train=False)
+            action, state, _ = agent.act(state, obs, reward, done, info, train=False, deterministic=True)
             print(f"Step {steps_taken}: action={action}")
             obs, reward, done, info = env.step(action)
             print(f"→ reward={reward}, done={done}") 
@@ -147,3 +147,6 @@ if __name__ == "__main__":
         log_dir=args.log_dir,
         render_mode=args.render_mode
     )
+
+
+

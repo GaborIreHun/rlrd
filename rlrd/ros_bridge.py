@@ -188,7 +188,7 @@ class RLAgentBridge:
         )
         
         # Load model weights
-        model_path = "checkpoints/sac_model_epoch_10.pt"
+        model_path = "checkpoints/sac_model_epoch_6.pt"
         loaded_state = torch.load(model_path, map_location=torch.device('cpu'), weights_only=True)
         if isinstance(loaded_state, dict):
             # If it's a state dict, load into model
