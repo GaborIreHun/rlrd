@@ -5,10 +5,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
-# ────────── 2. NTFS OverlayFS Workaround ──────────
-RUN apt-get update && apt-get remove -y sgml-base || true
+# ────────── 2. Setup ROS environment ──────────
 
-# ────────── 3. System & ROS dependencies ──────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     python3-venv \
@@ -33,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     net-tools \
     && rm -rf /var/lib/apt/lists/*
 
-# ────────── 4. Python venv + Install RL project (editable) ──────────
+# ────────── 3. Python venv + Install RL project (editable) ──────────
 WORKDIR /root/ws/rtrd
 
 # Debug: Print working directory and list files before copy
@@ -58,15 +56,18 @@ ENV VIRTUAL_ENV="/root/venv_rlrd"
 RUN python3 -c "import site, os, sys; sp=site.getsitepackages()[0]; \
     open(os.path.join(sp,'ros_noetic.pth'),'w').write('/opt/ros/noetic/lib/python3/dist-packages\n')"
 
-RUN pip install --upgrade pip==23.2.1 && \
-    pip install "setuptools==58.2.0" "wheel==0.37.1" && \
-    pip install "gym==0.19.0" "cloudpickle==1.6.0" "numpy==1.24.4" "scipy" && \
-    pip install torch torchvision matplotlib && \
-    cd /root/ws/rtrd && pip install -e .
+ENV PIP_DEFAULT_TIMEOUT=1800
 
-# ────────── 5. Pre-set env vars for TurtleBot3, Python Path ──────────
+RUN git config --global url."https://".insteadOf git:// && \
+    pip install --upgrade pip==23.2.1 && \
+    pip install "setuptools==58.2.0" "wheel==0.37.1" && \
+    pip install "gym==0.19.0" "cloudpickle==1.6.0" "numpy==1.24.4" "scipy==1.10.1" "torch==2.2.2" "torchvision==0.17.2" "matplotlib==3.7.1" && \
+    cd /root/ws/rtrd && pip install -e . && \
+    pip install git+https://github.com/MattChanTK/gym-maze.git
+
+# ────────── 4. Pre-set env vars for TurtleBot3, Python Path ──────────
 ENV TURTLEBOT3_MODEL=burger
 
-# ────────── 6. Entry point for interactive use ──────────
+# ────────── 5. Entry point for interactive use ──────────
 ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["bash"]

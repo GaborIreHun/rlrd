@@ -12,7 +12,7 @@ from rlrd.wrappers import StatsWrapper
 from rlrd.envs import ENV_REGISTRY
 
 # Utility to save training stats to CSV
-def save_stats(stats_list, filename="stats/experiment-1.csv"):
+def save_stats(stats_list, filename="stats_dmc/experiment-1.csv"):
     os.makedirs(os.path.dirname(filename), exist_ok=True)
     pd.DataFrame(stats_list).to_csv(filename, index=False)
 
@@ -30,16 +30,22 @@ class Training:
 
     def __post_init__(self):
         self.epoch = 0
-        self.agent = self.Agent(self.Env)
+        # Always resolve to a callable environment constructor
+        if isinstance(self.Env, str):
+            from rlrd.envs import ENV_REGISTRY
+            self.env_ctor = ENV_REGISTRY[self.Env]
+        else:
+            self.env_ctor = self.Env
+        self.agent = self.Agent(self.env_ctor)
+
         self.best_reward = float('-inf')  # Track the best test reward
 
     def run_epoch(self):
         stats = []
         state = None
 
-        env_ctor = ENV_REGISTRY[self.Env]   # pick constructor from registry
         with StatsWrapper(
-            env_ctor(seed_val=self.seed + self.epoch),
+            self.env_ctor(seed_val=self.seed + self.epoch),
             window=self.stats_window or self.steps
         ) as env:
             for rnd in range(self.rounds):
@@ -53,7 +59,7 @@ class Training:
 
                 # run test in parallel (blocks until done)
                 test = self.Test(
-                    Env=lambda **kwargs: ENV_REGISTRY[self.Env](**kwargs),
+                    Env=self.env_ctor,
                     actor=self.agent.model,
                     steps=self.stats_window or self.steps,
                     base_seed=self.seed + self.epochs
@@ -88,11 +94,11 @@ class Training:
                     stats_history.append(clean)
 
                     # At the end of the epoch, save full epoch summary
-                    save_stats(stats, filename=f"stats/experiment-1/summary_epoch_{self.epoch}.csv")
+                    save_stats(stats, filename=f"stats/experiment-1_dmc/summary_epoch_{self.epoch}.csv")
 
                     # Flush CSV every 100 steps
                     if step and step % 100 == 0:
-                        save_stats(stats_history, filename=f"stats/experiment-1/epoch_{self.epoch}_step_{step}.csv")
+                        save_stats(stats_history, filename=f"stats/experiment-1_dmc/epoch_{self.epoch}_step_{step}.csv")
 
 
                 # Build per-round summary from collected history
@@ -121,17 +127,17 @@ class Training:
                 reward = summary.get('reward_mean_test', None)
                 if reward is not None and reward > self.best_reward:
                     self.best_reward = reward
-                    torch.save(self.agent.model.state_dict(), f"checkpoints/best_model.pt")
+                    torch.save(self.agent.model.state_dict(), f"checkpoints_dmc/best_model.pt")
                     print(f"New best model saved with reward_mean_test = {reward:.4f}")
 
 
         self.epoch += 1
 
         # Save model after epoch
-        os.makedirs("checkpoints", exist_ok=True)
-        torch.save(self.agent.model.state_dict(), f"checkpoints/sac_model_epoch_{self.epoch}.pt")
+        os.makedirs("checkpoints_dmc", exist_ok=True)
+        torch.save(self.agent.model.state_dict(), f"checkpoints_dmc/sac_model_epoch_{self.epoch}.pt")
 
         # Final per-epoch summary
-        save_stats(stats, filename=f"stats/experiment-1/summary_epoch_{self.epoch}.csv")
+        save_stats(stats, filename=f"stats/experiment-1_dmc/summary_epoch_{self.epoch}.csv")
 
         return stats

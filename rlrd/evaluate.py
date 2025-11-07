@@ -32,7 +32,7 @@ def evaluate(
     log_dir="/tmp",
     render_mode="human"
 ):
-    video_dir = "videos"
+    video_dir = "videos_dmc"
     os.makedirs(video_dir, exist_ok=True)
 
     # Create env config

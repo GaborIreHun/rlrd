@@ -15,14 +15,19 @@ setup(
     download_url='',
     license='MIT',
     install_requires=[
-        'numpy',
-        'torch',
+        "pandas>=1.5.3,<2.1",
+        "gym==0.19.0",
+        "cloudpickle==1.6.0",
+        "numpy==1.24.4",
+        "scipy==1.10.1",
+        "torch==2.2.2",
+        "matplotlib==3.7.1",
         'imageio',
         'imageio-ffmpeg',
-        'pandas',
-        'gym==0.19.0',
         'pyyaml',
-        'wandb'
+        'wandb',
+        # "gym-maze",
+        "dm_control",
     ],
     extras_require={
 

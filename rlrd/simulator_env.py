@@ -1,5 +1,4 @@
-from queue import Empty
-from time import time
+import time
 
 import pandas as pd
 import gym
@@ -8,8 +7,10 @@ import numpy as np
 # ROS1
 import rospy
 from std_msgs.msg import Float32MultiArray
-from sensor_msgs.msg import JointState
+from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist
+from std_srvs.srv import Empty  # ROS service for resetting simulation
+from tf.transformations import euler_from_quaternion
 import subprocess
 
 # ROS2 alternative:
@@ -19,8 +20,8 @@ import subprocess
 class RobotSimEnv(gym.Env):
     """
     A Gazebo-connected Gym environment for training RL agents.
-    - Observations come from a ROS topic (e.g. /joint_states).
-    - Actions are sent to a ROS topic (e.g. /cmd_vel or /torque_cmd).
+    - Observations come from odometry (position, orientation, velocity).
+    - Actions are velocity commands (linear, angular).
     - Reward/done conditions are computed here.
     """
 
@@ -32,17 +33,17 @@ class RobotSimEnv(gym.Env):
         self.min_action_delay = min_action_delay
         self.max_action_delay = max_action_delay
 
-        # Define action/obs spaces (customize for your robot!)
-        # Example: 2D continuous actions (left_wheel_vel, right_wheel_vel)
+        # Define action/obs spaces
+        # Actions: [linear_velocity, angular_velocity]
         self.action_space = gym.spaces.Box(
             low=np.array([-1.0, -1.0]),
             high=np.array([1.0, 1.0]),
             dtype=np.float32
         )
 
-        # Example: observe 4 joint positions
+        # Observations: [x, y, theta, linear_vel]
         self.observation_space = gym.spaces.Box(
-            low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32 # Assume 4 joints
+            low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32
         )
 
         # ROS init (ROS1 example)
@@ -52,10 +53,12 @@ class RobotSimEnv(gym.Env):
 
         # Publishers & subscribers
         self.action_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
-        self.obs_sub = rospy.Subscriber("/joint_states", JointState, self._obs_callback)
+        self.obs_sub = rospy.Subscriber("/odom", Odometry, self._obs_callback)
 
         # === State Variables ===
         self.current_obs = np.zeros(4, dtype=np.float32)
+        self.prev_position = np.zeros(2, dtype=np.float32)  # For velocity calculation
+        self.prev_time = time.time()
         self.done = False
         self._step_duration = rospy.Duration(0.05)  # Simulation step size (50 ms)
 
@@ -77,9 +80,48 @@ class RobotSimEnv(gym.Env):
         return [seed_val]
 
     def _obs_callback(self, msg):
-        """Callback to update observations from ROS topic"""
-        if len(msg.position) >= 4:
-            self.current_obs = np.array(msg.position[:4], dtype=np.float32)
+        """Callback to update observations from odometry"""
+        try:
+            # Extract position
+            x = msg.pose.pose.position.x
+            y = msg.pose.pose.position.y
+            
+            # Extract orientation (convert quaternion to euler)
+            orientation_q = msg.pose.pose.orientation
+            orientation_list = [orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w]
+            (_, _, theta) = euler_from_quaternion(orientation_list)
+            
+            # Calculate velocity from position change (more reliable than twist)
+            current_time = time.time()
+            dt = current_time - self.prev_time
+            
+            if dt > 0.001:  # Avoid division by very small numbers
+                dx = x - self.prev_position[0]
+                dy = y - self.prev_position[1]
+                linear_vel = np.sqrt(dx**2 + dy**2) / dt
+                
+                # Update previous values
+                self.prev_position = np.array([x, y], dtype=np.float32)
+                self.prev_time = current_time
+            else:
+                linear_vel = 0.0
+            
+            # Create observation array
+            obs = np.array([x, y, theta, linear_vel], dtype=np.float32)
+            
+            # Safety check: reject NaN or Inf values
+            if np.any(np.isnan(obs)) or np.any(np.isinf(obs)):
+                rospy.logwarn_throttle(1.0, f"Invalid observation detected: {obs}, keeping previous observation")
+                return
+            
+            # Clip extreme values to prevent numerical issues
+            obs = np.clip(obs, -1000.0, 1000.0)
+            
+            self.current_obs = obs
+            
+        except Exception as e:
+            rospy.logerr(f"Error in odometry callback: {e}")
+            # Keep previous observation on error
 
     def reset(self):
         """Reset simulation via ROS service or topic"""
@@ -91,13 +133,35 @@ class RobotSimEnv(gym.Env):
         except rospy.ServiceException as e:
             rospy.logerr("Reset service call failed: %s", str(e))
 
-        rospy.sleep(1.0)  # Let things stabilize
+        # Sleep with exception handling for time jumps during simulation reset
+        try:
+            rospy.sleep(1.0)  # Let things stabilize
+        except rospy.exceptions.ROSTimeMovedBackwardsException:
+            # This is expected when resetting simulation - just continue
+            pass
 
         # === Reset internal state ===
         self.done = False
         self.current_obs = np.zeros(4, dtype=np.float32)
+        self.prev_position = np.zeros(2, dtype=np.float32)
+        self.prev_time = time.time()
         self.episode_steps = 0
         self.trajectory = []  # Clear trajectory for new episode
+
+        # Wait for fresh odometry data
+        rospy.sleep(0.1)
+        
+        # Ensure we have valid observations before returning
+        max_retries = 10
+        for _ in range(max_retries):
+            if not np.all(self.current_obs == 0):
+                break
+            rospy.sleep(0.1)
+        
+        # Final safety check
+        if np.any(np.isnan(self.current_obs)) or np.any(np.isinf(self.current_obs)):
+            rospy.logwarn(f"Invalid observation after reset: {self.current_obs}, using zeros")
+            self.current_obs = np.zeros(4, dtype=np.float32)
 
         return self.current_obs
 
@@ -111,16 +175,28 @@ class RobotSimEnv(gym.Env):
         self.action_pub.publish(twist_msg)
 
         # === Wait for sim step ===
-        rospy.sleep(self._step_duration)
+        try:
+            rospy.sleep(self._step_duration)
+        except rospy.exceptions.ROSTimeMovedBackwardsException:
+            # This is expected when simulation is reset
+            pass
 
         # === Get new observation ===
         obs = self.current_obs.copy()
 
         # === Reward function ===
-        reward = -np.linalg.norm(obs)  # Encourage staying near origin
-
+        # Simple reward: small negative step penalty + bonus for staying upright/stable
+        reward = -0.1  # Step penalty to encourage efficiency
+        
         # === Done condition ===
-        self.done = bool(np.any(np.abs(obs) > 10.0))
+        # Episode ends if: position too far, or max steps reached
+        position_limit = 5.0  # Reduced from 10.0 for faster episodes
+        max_steps = 500  # Maximum steps per episode (matching training config)
+        
+        position_violation = bool(np.any(np.abs(obs[:2]) > position_limit))  # Check x, y position
+        max_steps_reached = self.episode_steps >= max_steps
+        
+        self.done = position_violation or max_steps_reached
         self.episode_steps += 1
 
         # === Log step data for reproducibility ===

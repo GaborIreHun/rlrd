@@ -89,8 +89,10 @@ def run_fs(path: str, run_cls: type = Training):
     if not exists(path + '/stats'):
         dump(pd.DataFrame(), path + '/stats')
     for stats in iterate_episodes(run_cls, path + '/state'):
-        dump(load(path + '/stats').append(stats, ignore_index=True),
-             path + '/stats')  # concat with stats from previous episodes
+        # stats is already a DataFrame from run_epoch()
+        old_stats = load(path + '/stats')
+        combined = pd.concat([old_stats, stats], ignore_index=True) if not old_stats.empty else stats
+        dump(combined, path + '/stats')  # concat with stats from previous episodes
 
 
 # === specifications ===================================================================================================
@@ -201,6 +203,40 @@ DelayedSacShortTimesteps = partial(  # works at 2/5 of the original Mujoco times
     Env=partial(frame_skip=2),  # only works with Mujoco tasks (for now)
     steps=5000,
     Agent=partial(memory_size=2500000, training_steps=2 / 5, start_training=25000, discount=0.996, entropy_scale=2 / 5)
+)
+
+# TurtleBot3 Gazebo Simulation Training
+SimTraining = partial(
+    Training,
+    Agent=partial(
+        rlrd.dcac.Agent,
+        device="cpu",
+        rtac=False,
+        batchsize=64,
+        memory_size=500000,
+        lr=0.0003,
+        discount=0.99,
+        target_update=0.005,
+        reward_scale=5.0,
+        entropy_scale=1.0,
+        start_training=5000,
+        Model=partial(
+            rlrd.dcac_models.Mlp,
+            num_critics=2,
+            act_delay=True,
+            obs_delay=True)),
+    Env=partial(
+        rlrd.envs.RandomDelayEnv,
+        id="SimEnv-v0",
+        min_observation_delay=0,
+        sup_observation_delay=2,
+        min_action_delay=0,
+        sup_action_delay=3,
+        real_world_sampler=0),
+    epochs=20,
+    rounds=30,
+    steps=500,
+    tag='turtlebot3_training'
 )
 
 

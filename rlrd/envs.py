@@ -3,6 +3,8 @@ import os
 from dataclasses import dataclass, InitVar
 import gym
 from gym.wrappers import TimeLimit
+from gym.envs.registration import register
+from rlrd.dmc_wrapper import DMCEnv
 
 from rlrd.wrappers import Float64ToFloat32, TimeLimitResetWrapper, NormalizeActionWrapper, RealTimeWrapper, TupleObservationWrapper, AffineObservationWrapper, AffineRewardWrapper, PreviousActionWrapper, FrameSkip, get_wrapper_by_class
 from rlrd.wrappers_rd import RandomDelayWrapper, WifiDelayWrapper1, WifiDelayWrapper2
@@ -10,8 +12,28 @@ import numpy as np
 import pickle
 from rlrd.batch_env import get_env_state
 # from .gym_env import GymEnv
-from rlrd.simulator_env import RobotSimEnv
+# Conditionally import ROS-dependent modules
+try:
+    from rlrd.simulator_env import RobotSimEnv
+    ROS_AVAILABLE = True
+except ImportError:
+    RobotSimEnv = None
+    ROS_AVAILABLE = False
+
 from rlrd import wrappers as base_wrappers
+import gym_maze
+
+# Register SimEnv with gym (only if ROS is available)
+if ROS_AVAILABLE:
+    try:
+        register(
+            id='SimEnv-v0',
+            entry_point='rlrd.simulator_env:RobotSimEnv',
+            max_episode_steps=500,
+        )
+    except gym.error.Error:
+        # Already registered, skip
+        pass
 
 
 def mujoco_py_issue_424_workaround():
@@ -127,35 +149,40 @@ class RandomDelayEnv(Env):
         super().__init__(env)
 
 
-class RobotSimDelayEnv(Env):
-    def __init__(self,
-                 seed_val: int = 0,
-                 log_dir: str = "/tmp",
-                 min_observation_delay: int = 0,
-                 sup_observation_delay: int = 0,
-                 min_action_delay: int = 0,
-                 sup_action_delay: int = 0,
-                 instant_rewards: bool = True,
-                 store_env: bool = False):
-        if sup_observation_delay < min_observation_delay:
-            raise ValueError(f"sup_observation_delay ({sup_observation_delay}) must be >= min_observation_delay ({min_observation_delay})")
-        if sup_action_delay < min_action_delay:
-            raise ValueError(f"sup_action_delay ({sup_action_delay}) must be >= min_action_delay ({min_action_delay})")
-        env = RobotSimEnv(
-            seed_val=seed_val,
-            log_dir=log_dir,
-            min_obs_delay=min_observation_delay,
-            max_obs_delay=sup_observation_delay,
-            min_action_delay=min_action_delay,
-            max_action_delay=sup_action_delay
-        )
-        delay_env = base_wrappers.RandomDelayWrapper(
-            env,
-            obs_delay_range=range(min_observation_delay, sup_observation_delay + 1),
-            act_delay_range=range(min_action_delay, sup_action_delay + 1),
-            instant_rewards=instant_rewards
-        )
-        super().__init__(delay_env, store_env=store_env)
+# Only define RobotSimDelayEnv if ROS is available
+if ROS_AVAILABLE:
+    class RobotSimDelayEnv(Env):
+        def __init__(self,
+                     seed_val: int = 0,
+                     log_dir: str = "/tmp",
+                     min_observation_delay: int = 0,
+                     sup_observation_delay: int = 0,
+                     min_action_delay: int = 0,
+                     sup_action_delay: int = 0,
+                     instant_rewards: bool = True,
+                     store_env: bool = False):
+            if sup_observation_delay < min_observation_delay:
+                raise ValueError(f"sup_observation_delay ({sup_observation_delay}) must be >= min_observation_delay ({min_observation_delay})")
+            if sup_action_delay < min_action_delay:
+                raise ValueError(f"sup_action_delay ({sup_action_delay}) must be >= min_action_delay ({min_action_delay})")
+            env = RobotSimEnv(
+                seed_val=seed_val,
+                log_dir=log_dir,
+                min_obs_delay=min_observation_delay,
+                max_obs_delay=sup_observation_delay,
+                min_action_delay=min_action_delay,
+                max_action_delay=sup_action_delay
+            )
+            delay_env = base_wrappers.RandomDelayWrapper(
+                env,
+                obs_delay_range=range(min_observation_delay, sup_observation_delay + 1),
+                act_delay_range=range(min_action_delay, sup_action_delay + 1),
+                instant_rewards=instant_rewards
+            )
+            super().__init__(delay_env, store_env=store_env)
+else:
+    # Provide a dummy placeholder when ROS is not available
+    RobotSimDelayEnv = None
 
 
 def test_random_delay_env():
@@ -187,12 +214,79 @@ ENV_REGISTRY = {
 for env_id in GYM_ENVS:
     ENV_REGISTRY[f"RandomDelay-{env_id}"] = RandomDelayEnv
 
+def make_maze_env(seed_val=0, **kwargs):
+    return gym.make("maze-v0")
+
+def make_dmcontrol_env(seed_val=0, **kwargs):
+    # Use point_mass with 'easy' task instead of non-existent 'maze'
+    return DMCEnv(domain_name="point_mass", task_name="easy", seed=seed_val)
+
+def make_maze_delay_env(seed_val=0, min_observation_delay=0, sup_observation_delay=2, 
+                        min_action_delay=0, sup_action_delay=3, **kwargs):
+    """Gym Maze environment with configurable delays - use RandomDelayEnv properly"""
+    # RandomDelayEnv expects 'id' parameter, not a pre-made environment
+    # We need to register maze-v0 so it can be created via gym.make()
+    # Since maze-v0 is already registered by gym_maze, we can use RandomDelayEnv directly
+    from rlrd.wrappers_rd import RandomDelayWrapper
+    base_env = gym.make("maze-v0")
+    base_env = Float64ToFloat32(base_env)
+    delayed_env = RandomDelayWrapper(
+        base_env,
+        obs_delay_range=range(min_observation_delay, sup_observation_delay),
+        act_delay_range=range(min_action_delay, sup_action_delay)
+    )
+    # Wrap in Env to get transition attribute
+    return Env(delayed_env, store_env=False)
+
+
+def make_dmcontrol_delay_env(seed_val=0, min_observation_delay=0, sup_observation_delay=2, 
+                              min_action_delay=0, sup_action_delay=3, **kwargs):
+    """Point mass environment with configurable delays"""
+    from rlrd.wrappers_rd import RandomDelayWrapper
+    base_env = DMCEnv(domain_name="point_mass", task_name="easy", seed=seed_val)
+    base_env = Float64ToFloat32(base_env)
+    delayed_env = RandomDelayWrapper(
+        base_env,
+        obs_delay_range=range(min_observation_delay, sup_observation_delay),
+        act_delay_range=range(min_action_delay, sup_action_delay)
+    )
+    # Wrap in Env to get transition attribute
+    return Env(delayed_env, store_env=False)
+
 # Custom simulation environments
 ENV_REGISTRY.update({
-    "SimEnv": RobotSimDelayEnv,
-    "RandomDelayPendulum-v0": RandomDelayEnv
+    "RandomDelayPendulum-v0": RandomDelayEnv,
+    "MazeEnv": make_maze_env,
+    "MazeEnv-delay": make_maze_delay_env,
+    "PointMaze": make_dmcontrol_env,
+    "dmcontrol-pointmaze": make_dmcontrol_env,
+    "dmcontrol-pointmaze-delay": make_dmcontrol_delay_env,
     # "WebotsEnv": WebotsSimEnv,     # (if implemented)
     # "CoppeliaEnv": CoppeliaSimEnv, # (if implemented)
     # "PyBulletEnv": PyBulletEnv,    # (if implemented)
     # "UnityEnv": UnityEnv,          # (if implemented)
 })
+
+# Add ROS-dependent environments only if ROS is available
+if ROS_AVAILABLE:
+    ENV_REGISTRY["SimEnv"] = RobotSimDelayEnv
+
+
+# ENV_REGISTRY["dmcontrol-cartpole"] = lambda seed_val=0, **kwargs: DMCEnv("cartpole", "swingup", seed=seed_val)
+
+# ------------- Gym Maze Integration -----------
+try:
+    ENV_REGISTRY["gym-maze"] = lambda seed_val=0, **kwargs: gym.make("maze-v0")
+except ImportError:
+    pass  # It's optional
+
+def test_dmcontrol_pointmaze():
+    env = ENV_REGISTRY['dmcontrol-pointmaze']()
+    obs = env.reset()
+    for _ in range(10):
+        obs, reward, done, _ = env.step(env.action_space.sample())
+        print(obs.shape, reward, done)
+
+if __name__ == '__main__':
+    test_dmcontrol_pointmaze()
+
