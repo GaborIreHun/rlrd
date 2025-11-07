@@ -81,11 +81,7 @@ python3 -m rlrd run rlrd:DcacTraining \
 
 ---
 
-## Training on Other Environments
-
-### Quick Testing Without ROS/Gazebo
-
-**IMPORTANT**: The `gym-maze` (maze-v0) environment has **discrete actions** (up/down/left/right) and is **incompatible** with DCAC/SAC algorithms which require continuous control. 
+## Quick Testing Without ROS/Gazebo
 
 For quick testing without ROS, use these working alternatives:
 
@@ -117,21 +113,27 @@ python3 -m rlrd run-fs checkpoints/pointmaze_test rlrd:DcacTraining \
     steps=1000
 ```
 
-**Why gym-maze doesn't work:**
-- maze-v0 action space: `Discrete(4)` (discrete: 0=up, 1=down, 2=left, 3=right)
-- DCAC/SAC requirement: `Box` (continuous: e.g., [-1.0, 1.0])
-- This fundamental incompatibility cannot be fixed without modifying the algorithms
+**Deploying PointMaze Models to TurtleBot3:**
 
-### Phase 1: Develop Algorithm (No Simulator)
-Use Pendulum or PointMaze for algorithm development:
+PointMaze-trained models can now be deployed to TurtleBot3 using the observation adapter:
 
 ```bash
-# Pendulum - simplest and fastest
-python3 -m rlrd run-fs checkpoints/pendulum_dev rlrd:DcacTraining \
-    Env=RandomDelay-Pendulum-v0 \
-    Agent.device=cpu \
-    Agent.batchsize=128 \
-    Agent.memory_size=1000000 \
+# After training on PointMaze, deploy to TurtleBot3 simulator
+python3 -m rlrd.maze_to_sim_bridge checkpoints/pointmaze_test/state
+```
+
+This adapter automatically translates between observation spaces:
+- **PointMaze**: `[x, y, velocity_x, velocity_y]` (Cartesian velocities)
+- **TurtleBot3**: `[x, y, theta, linear_velocity]` (orientation + scalar velocity)
+
+**Note**: While this enables deployment, performance may be suboptimal because:
+- The model was trained on different dynamics (point mass vs. differential drive robot)
+- Translation is approximate (velocity components vs. orientation-based control)
+- **For best results, train directly on SimEnv** (see below)
+
+---
+
+## Training on TurtleBot3 Simulator (Recommended for Deployment)
     Agent.lr=0.0003 \
     Agent.discount=0.99 \
     Agent.target_update=0.005 \
@@ -154,8 +156,11 @@ python3 -m rlrd run rlrd:DcacTraining \
     steps=200
 ```
 
-### Phase 2: Transfer to Simulator
-Once you have a working agent, you can optionally transfer learned features to the simulator using SimTraining.
+## Training on TurtleBot3 Simulator (Recommended for Deployment)
+
+**Use SimTraining for best robot performance:**
+
+### Using Preconfigured SimTraining
 
 ---
 

@@ -89,9 +89,13 @@ def run_fs(path: str, run_cls: type = Training):
     if not exists(path + '/stats'):
         dump(pd.DataFrame(), path + '/stats')
     for stats in iterate_episodes(run_cls, path + '/state'):
-        # stats is already a DataFrame from run_epoch()
+        # stats is a list of Series from run_epoch(), convert to DataFrame
+        stats_df = pd.DataFrame(stats)
         old_stats = load(path + '/stats')
-        combined = pd.concat([old_stats, stats], ignore_index=True) if not old_stats.empty else stats
+        # Ensure old_stats is a DataFrame (handle legacy list format)
+        if isinstance(old_stats, list):
+            old_stats = pd.DataFrame(old_stats)
+        combined = pd.concat([old_stats, stats_df], ignore_index=True) if not old_stats.empty else stats_df
         dump(combined, path + '/stats')  # concat with stats from previous episodes
 
 
