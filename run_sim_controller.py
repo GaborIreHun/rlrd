@@ -6,18 +6,34 @@ Make sure Gazebo is running first:
     roslaunch turtlebot3_gazebo turtlebot3_world.launch
 
 Then run this script:
-    python3 run_sim_controller.py
+    python3 run_sim_controller.py [checkpoint_path]
+    
+Examples:
+    python3 run_sim_controller.py checkpoints/pointmaze_1/state
+    python3 run_sim_controller.py checkpoints/maze_model_1/state
+    
+If no checkpoint path is provided, defaults to 'checkpoints/maze_model_1/state'
 """
 
+import sys
 from rlrd.maze_to_sim_bridge import SimController
 
 def main():
-    checkpoint_path = 'checkpoints/maze_model_1/state'
+    # Allow checkpoint path as command-line argument
+    if len(sys.argv) > 1:
+        checkpoint_path = sys.argv[1]
+    else:
+        checkpoint_path = 'checkpoints/maze_model_1/state'
+        print(f"No checkpoint specified, using default: {checkpoint_path}")
     
     print("=" * 60)
     print("Starting Maze Agent in TurtleBot3 Simulation")
     print("=" * 60)
     print(f"Checkpoint: {checkpoint_path}")
+    print("=" * 60)
+    print("\nAction Scaling Configuration:")
+    print("  Linear velocity:  force_x × 5.0  (clipped to ±0.22 m/s)")
+    print("  Angular velocity: force_y × 10.0 (clipped to ±2.84 rad/s)")
     print("=" * 60)
     
     try:

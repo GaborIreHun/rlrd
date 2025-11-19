@@ -262,25 +262,23 @@ class SimController:
         
         PointMaze action: [force_x, force_y] in range [-1, 1]
         TurtleBot3 needs: [linear_x, angular_z]
+        
+        Strategy: Use force_x for linear velocity and force_y for angular velocity
+        This is more direct and allows the agent's learned policy to control both independently.
         """
         force_x, force_y = pointmaze_action
         
-        # Convert force vector to robot commands
-        # Linear velocity: magnitude of force vector
-        linear_x = np.sqrt(force_x**2 + force_y**2)
-        linear_x = np.clip(linear_x * 0.22, 0.0, 0.22)  # Scale to TurtleBot3 max speed
+        # Direct mapping with aggressive scaling for better responsiveness
+        # Linear velocity from force_x (forward/backward motion)
+        linear_x = force_x * 5.0  # Increased from 0.22 to 5.0 (22x more aggressive)
         
-        # Angular velocity: direction of force vector
-        target_angle = np.arctan2(force_y, force_x)
+        # Angular velocity from force_y (turning motion)  
+        angular_z = force_y * 10.0  # Increased from 2.0 to 10.0 (5x more aggressive)
         
-        # Get current orientation
-        turtlebot_obs = self._get_turtlebot_state()
-        if turtlebot_obs is not None:
-            current_angle = turtlebot_obs[2]
-            angle_diff = self._normalize_angle(target_angle - current_angle)
-            angular_z = np.clip(angle_diff * 2.0, -2.84, 2.84)  # P-controller
-        else:
-            angular_z = 0.0
+        # Clip to TurtleBot3 Burger physical limits
+        # Max linear: 0.22 m/s, Max angular: 2.84 rad/s
+        linear_x = np.clip(linear_x, -0.22, 0.22)
+        angular_z = np.clip(angular_z, -2.84, 2.84)
         
         return linear_x, angular_z
     
