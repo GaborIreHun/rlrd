@@ -94,6 +94,9 @@ python3 -m rlrd run-fs checkpoints/simtraining_checkpoint rlrd:SimTraining
 **Alternative: Manual configuration (for advanced users)**
 
 **For CPU training:**
+
+ROS Simulator training:
+
 ```bash copy
 python3 -m rlrd run rlrd:DcacTraining \
     Env=SimEnv \
@@ -115,6 +118,44 @@ python3 -m rlrd run rlrd:DcacTraining \
     rounds=30 \
     steps=500 \
     tag=turtlebot3_training
+```
+Without ROS training legacy statistics format (pt file):
+
+```bash copy
+python3 -m rlrd run rlrd:DcacTraining \
+    Env=dmcontrol-pointmaze-delay \
+    Env.min_observation_delay=0 \
+    Env.sup_observation_delay=2 \
+    Env.min_action_delay=0 \
+    Env.sup_action_delay=3 \
+    Agent.batchsize=128 \
+    Agent.memory_size=1000000 \
+    Agent.lr=0.0003 \
+    Agent.discount=0.99 \
+    Agent.device=cpu \
+    epochs=20 \
+    rounds=50 \
+    steps=1000 \
+    tag=pointmaze_fast
+```
+Enhanced statistics (non-pt file), configure checkpoints/pointmaze_1 according to desired stats saving path:
+
+```bash copy
+python3 -m rlrd run-fs checkpoints/pointmaze_1 rlrd:DcacTraining \
+    Env=dmcontrol-pointmaze-delay \
+    Env.min_observation_delay=0 \
+    Env.sup_observation_delay=2 \
+    Env.min_action_delay=0 \
+    Env.sup_action_delay=3 \
+    Agent.batchsize=128 \
+    Agent.memory_size=1000000 \
+    Agent.lr=0.0003 \
+    Agent.discount=0.99 \
+    Agent.device=cpu \
+    epochs=20 \
+    rounds=50 \
+    steps=1000 \
+    tag=pointmaze_fast
 ```
 
 **For GPU training (if container started with --gpus all):**
@@ -190,6 +231,40 @@ python3 -m rlrd.ros_bridge
 [INFO] Step 100: avg_linear=0.312 m/s
 [INFO]   avg_angular=-0.089 rad/s
 [INFO]   position: x=1.234, y=-0.456, current_vel=0.298
+```
+
+**Complete Deployment Steps**
+Terminal 1: Launch Gazebo (if not already running)
+```bash copy
+# On host
+xhost +local:root
+sudo docker run -it --rm \
+  --net=host \
+  -e DISPLAY=$DISPLAY \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v /mnt/research/rtrd/rlrd:/root/ws/rtrd \
+  rlrd-gazebo
+
+# Inside container
+source /opt/ros/noetic/setup.bash
+roslaunch turtlebot3_gazebo turtlebot3_world.launch
+```
+
+Wait for Gazebo to load completely.
+
+Terminal 2: Deploy Your Trained Agent
+
+```bash copy
+# On host - attach to running container
+sudo docker exec -it $(docker ps -qf "ancestor=rlrd-gazebo") bash
+
+# Inside container - MUST source ROS first!
+source /opt/ros/noetic/setup.bash
+source /root/venv_rlrd/bin/activate
+cd /root/ws/rtrd
+
+# Deploy your PointMaze agent
+python3 run_sim_controller.py checkpoints/pointmaze_1/state
 ```
 
 **Note on old checkpoints:**
