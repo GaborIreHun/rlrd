@@ -50,11 +50,37 @@ class MazeToSimBridge:
         self.agent = training_instance.agent
         self.agent.device = self.device
         
-        # Get environment info
-        if hasattr(training_instance, 'Env'):
-            self.env_name = training_instance.Env
+        # Get environment info from spec.json for accurate detection
+        import json
+        spec_path = os.path.join(os.path.dirname(checkpoint_path), 'spec.json')
+        self.has_delay_wrapper = False
+        
+        if os.path.exists(spec_path):
+            with open(spec_path, 'r') as f:
+                spec = json.load(f)
+                if 'Env' in spec:
+                    # Check if wrapped with RandomDelayEnv
+                    if '+' in spec['Env'] and 'RandomDelayEnv' in spec['Env']['+']:
+                        self.has_delay_wrapper = True
+                    # Get the base environment ID
+                    if 'id' in spec['Env']:
+                        self.env_name = spec['Env']['id']
+                    else:
+                        self.env_name = str(training_instance.Env) if hasattr(training_instance, 'Env') else 'unknown'
+                else:
+                    self.env_name = str(training_instance.Env) if hasattr(training_instance, 'Env') else 'unknown'
         else:
-            self.env_name = 'unknown'
+            # Fallback to training instance
+            if hasattr(training_instance, 'Env'):
+                # Try to get the actual environment ID
+                if hasattr(training_instance.Env, 'id'):
+                    self.env_name = training_instance.Env.id
+                elif hasattr(training_instance.Env, 'env') and hasattr(training_instance.Env.env, 'spec'):
+                    self.env_name = training_instance.Env.env.spec.id
+                else:
+                    self.env_name = str(training_instance.Env)
+            else:
+                self.env_name = 'unknown'
         
         # Get model info
         print(f"Loaded agent type: {type(self.agent).__name__}")
@@ -79,7 +105,16 @@ class MazeToSimBridge:
         self.agent_state = None  # Track agent's internal state
         
         # Determine if environment uses delays
-        self.uses_delays = 'delay' in self.env_name.lower()
+        # Check both the environment name and if RandomDelayEnv wrapper was used
+        self.uses_delays = self.has_delay_wrapper or 'delay' in str(self.env_name).lower()
+        
+        # Detect observation format from model input dimension
+        # PointMaze expects [x, y, vel_x, vel_y] = 4D
+        # SimEnv (TurtleBot3) expects [x, y, theta, vel] = 4D  
+        # Both are 4D, so we check the environment ID instead
+        self.expects_pointmaze_obs = 'pointmaze' in str(self.env_name).lower()
+        
+        print(f"Observation format: {'PointMaze [x,y,vx,vy]' if self.expects_pointmaze_obs else 'TurtleBot3 [x,y,theta,v]'}")
         
         # Initialize action buffer for delay environments
         if self.uses_delays:
@@ -268,12 +303,17 @@ class SimController:
         """
         force_x, force_y = pointmaze_action
         
-        # Direct mapping with aggressive scaling for better responsiveness
+        # Direct mapping with balanced scaling
         # Linear velocity from force_x (forward/backward motion)
-        linear_x = force_x * 5.0  # Increased from 0.22 to 5.0 (22x more aggressive)
+        linear_x = force_x * 8.0  # Favor linear motion
         
         # Angular velocity from force_y (turning motion)  
-        angular_z = force_y * 10.0  # Increased from 2.0 to 10.0 (5x more aggressive)
+        angular_z = force_y * 2.0  # Dampen angular to reduce spinning
+        
+        # Bias toward forward motion when both are non-zero
+        if abs(linear_x) > 0.01 and abs(angular_z) > 0.01:
+            # When moving forward, reduce turning proportionally
+            angular_z *= 0.5  # Halve angular when also moving linearly
         
         # Clip to TurtleBot3 Burger physical limits
         # Max linear: 0.22 m/s, Max angular: 2.84 rad/s
@@ -313,14 +353,22 @@ class SimController:
             turtlebot_obs = self._get_turtlebot_state()
             
             if turtlebot_obs is not None:
-                # Translate to PointMaze observation
-                pointmaze_obs = self.translate_observation(turtlebot_obs)
+                # Check if we need to translate observation format
+                # PointMaze agents expect [x, y, vel_x, vel_y]
+                # SimEnv agents expect [x, y, theta, vel] directly
                 
-                # Get action from PointMaze model
-                pointmaze_action = self.bridge.get_action(pointmaze_obs)
+                if self.bridge.expects_pointmaze_obs:
+                    # Translate to PointMaze observation format
+                    agent_obs = self.translate_observation(turtlebot_obs)
+                else:
+                    # Use TurtleBot3 observation directly (SimEnv format)
+                    agent_obs = turtlebot_obs
+                
+                # Get action from model
+                action = self.bridge.get_action(agent_obs)
                 
                 # Translate to TurtleBot3 command
-                linear_x, angular_z = self.translate_action(pointmaze_action)
+                linear_x, angular_z = self.translate_action(action)
                 
                 # Publish command
                 self._publish_action(linear_x, angular_z)
@@ -330,9 +378,13 @@ class SimController:
                     print(f"\nStep {step_count}")
                     print(f"TurtleBot3: pos=({turtlebot_obs[0]:.3f}, {turtlebot_obs[1]:.3f}), "
                           f"theta={turtlebot_obs[2]:.3f}, vel={turtlebot_obs[3]:.3f}")
-                    print(f"PointMaze:  pos=({pointmaze_obs[0]:.3f}, {pointmaze_obs[1]:.3f}), "
-                          f"vel_x={pointmaze_obs[2]:.3f}, vel_y={pointmaze_obs[3]:.3f}")
-                    print(f"Action:     force=({pointmaze_action[0]:.3f}, {pointmaze_action[1]:.3f})")
+                    if self.bridge.expects_pointmaze_obs:
+                        print(f"Agent obs:  pos=({agent_obs[0]:.3f}, {agent_obs[1]:.3f}), "
+                              f"vel_x={agent_obs[2]:.3f}, vel_y={agent_obs[3]:.3f}")
+                    else:
+                        print(f"Agent obs:  pos=({agent_obs[0]:.3f}, {agent_obs[1]:.3f}), "
+                              f"theta={agent_obs[2]:.3f}, vel={agent_obs[3]:.3f}")
+                    print(f"Action:     force=({action[0]:.3f}, {action[1]:.3f})")
                     print(f"Command:    linear={linear_x:.3f}, angular={angular_z:.3f}")
                 
                 step_count += 1

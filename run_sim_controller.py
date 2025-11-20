@@ -32,8 +32,9 @@ def main():
     print(f"Checkpoint: {checkpoint_path}")
     print("=" * 60)
     print("\nAction Scaling Configuration:")
-    print("  Linear velocity:  force_x × 5.0  (clipped to ±0.22 m/s)")
-    print("  Angular velocity: force_y × 10.0 (clipped to ±2.84 rad/s)")
+    print("  Linear velocity:  force_x × 8.0  (clipped to ±0.22 m/s)")
+    print("  Angular velocity: force_y × 2.0  (clipped to ±2.84 rad/s)")
+    print("  Dampening: Angular halved when both active")
     print("=" * 60)
     
     try:
