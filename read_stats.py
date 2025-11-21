@@ -1,5 +1,5 @@
 import pickle
-with open("stats", "rb") as f:
+with open("checkpoints/pointmaze_1/stats", "rb") as f:
     data = pickle.load(f)
 print(type(data))
 if isinstance(data, dict):
