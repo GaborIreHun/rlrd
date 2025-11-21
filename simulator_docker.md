@@ -255,15 +255,15 @@ Wait for Gazebo to load completely.
 Terminal 2: Deploy Your Trained Agent
 
 ```bash copy
-# On host - attach to running container
+# First, attach to the container
 sudo docker exec -it $(docker ps -qf "ancestor=rlrd-gazebo") bash
 
-# Inside container - MUST source ROS first!
+# Then INSIDE the container, run these commands in order:
 source /opt/ros/noetic/setup.bash
 source /root/venv_rlrd/bin/activate
 cd /root/ws/rtrd
 
-# Deploy your PointMaze agent
+# Now run the controller
 python3 run_sim_controller.py checkpoints/pointmaze_1/state
 ```
 

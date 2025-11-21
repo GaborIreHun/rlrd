@@ -1,22 +1,32 @@
 # Reinforcement Learning with Random Delays
 
-### Virtual environment
-- python3.11 -m venv .venv
-- source .venv/bin/activate
-- which python
-- pip install -e ../gym
-- pip install --upgrade pip
-- pip install -e .
-- python -c "import pandas; print(pandas.__version__)"
-
-
 PyTorch implementation of our paper [Reinforcement Learning with Random Delays (ICLR 2020)](https://openreview.net/forum?id=QFYnKlBJYR) – [[Arxiv]](https://arxiv.org/abs/2010.02966)
 
-### Getting Started
+## Features
+
+- **DCAC Agent**: Delay-aware actor-critic with support for random delays
+- **SAC Agent**: Soft Actor-Critic implementation  
+- **PointMaze Environment**: DMControl-based point mass navigation with configurable delays
+- **TurtleBot3 Integration**: Deploy trained agents to ROS/Gazebo simulation
+- **Maze-to-Sim Bridge**: Load trained PointMaze agents and use in different environments
+
+## Quick Start
+
+### Virtual Environment Setup
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e .
+```
+
+### Installation
 This repository can be pip-installed via:
 ```bash
 pip install git+https://github.com/rmst/rlrd.git
 ```
+
+### Basic Training
 
 DC/AC can be run on a simple 1-step delayed `Pendulum-v0` task via:
 ```bash
@@ -28,6 +38,97 @@ Hyperparameters can be set via command line. E.g.:
 python -m rlrd run rlrd:DcacTraining \
 Env.id=Pendulum-v0 \
 Env.min_observation_delay=0 \
+```
+
+### Using Trained Agents
+
+**Test agent locally (no ROS required):**
+```bash
+python3 test_maze_agent.py
+```
+
+**Load agent in Python:**
+```python
+from rlrd.maze_to_sim_bridge import MazeToSimBridge
+
+bridge = MazeToSimBridge('checkpoints/maze_model_1/state', use_ros=False)
+action = bridge.get_action(observation)  # observation: [x, y, vel_x, vel_y]
+```
+
+**Deploy to TurtleBot3 simulation:**
+```bash
+# Terminal 1: Launch Gazebo
+roslaunch turtlebot3_gazebo turtlebot3_world.launch
+
+# Terminal 2: Run agent controller
+python3 run_sim_controller.py
+```
+
+## Documentation
+
+- **[Maze-to-Sim Guide](MAZE_TO_SIM_GUIDE.md)**: Comprehensive guide for loading and deploying trained agents
+- **[Training Strategy](training_strategy.md)**: Training tips and strategies
+- **[Simulation Deployment](SIMTRAINING.md)**: Deploy to simulation environments
+
+## Checkpoints
+
+Checkpoints are saved using `rlrd.util.dump()` and loaded with `rlrd.util.load()`:
+
+```python
+from rlrd.util import load
+
+# Load checkpoint
+training = load('checkpoints/maze_model_1/state')
+agent = training.agent
+
+# Access training info
+print(f"Environment: {training.Env}")
+print(f"Epoch: {training.epoch}/{training.epochs}")
+```
+
+**Important**: Use `load()` from `rlrd.util`, NOT `torch.load()`. Checkpoints are pickle format, not PyTorch format.
+
+## Troubleshooting
+
+### Robot Not Moving in Simulation
+1. Check ROS topics: `python3 check_ros_topics.py`
+2. Test direct control: `python3 test_robot_motion.py`
+3. Verify odometry updates: `rostopic echo /odom`
+4. Increase action scaling in `maze_to_sim_bridge.py`
+
+### Import Errors (rospy)
+- Source ROS: `source /opt/ros/noetic/setup.bash`
+- Or use `use_ros=False` for non-ROS testing
+
+### Checkpoint Loading Error
+- Error: "Invalid magic number; corrupt file?"
+- Solution: Use `load()` from `rlrd.util`, not `torch.load()`
+
+See [MAZE_TO_SIM_GUIDE.md](MAZE_TO_SIM_GUIDE.md) for detailed troubleshooting.
+
+## Project Structure
+
+```
+rlrd/
+├── __init__.py              # Main training specs
+├── sac.py                   # SAC agent
+├── dcac.py                  # DCAC agent  
+├── sac_models.py            # SAC models
+├── dcac_models.py           # DCAC models with delay handling
+├── envs.py                  # Environment constructors
+├── wrappers.py              # Environment wrappers (delays)
+├── training.py              # Training loop
+├── testing.py               # Evaluation
+├── memory.py                # Replay buffer
+├── util.py                  # Utilities (save/load)
+├── maze_to_sim_bridge.py    # Agent deployment bridge ✨ NEW
+├── test_maze_agent.py       # Test script ✨ NEW
+├── run_sim_controller.py    # ROS controller ✨ NEW
+├── check_ros_topics.py      # ROS diagnostics ✨ NEW
+└── test_robot_motion.py     # Robot motion test ✨ NEW
+```
+
+### Getting Started
 Env.sup_observation_delay=2 \
 Env.min_action_delay=0 \
 Env.sup_action_delay=3 \
@@ -108,6 +209,49 @@ python -m rlrd run rlrd:DcacTraining Env.id=Pendulum-v0 Env.min_observation_dela
 <!--  -->
 <!-- python -m rlrd.evaluate --model ../checkpoints/sac_model_epoch_X.pt --env Pendulum-v0 --steps 2000 --seed 42 -->
 python -m rlrd.evaluate --model checkpoints/sac_model_epoch_10.pt --env Pendulum-v0 --steps 2000 --seed 42 --episodes 3 --min_observation_delay 0 --sup_observation_delay 1 --min_action_delay 0 --sup_action_delay 1
+
+# Simulator
+
+## Install ROS 1 Noetic
+
+### 1. Set up sources
+sudo sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
+
+### 2. Add the ROS key
+sudo apt install curl
+curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | sudo apt-key add -
+
+### 3. Install base ROS (includes rospy)
+sudo apt update
+sudo apt install ros-noetic-desktop-full
+
+### 4. Initialize rosdep
+sudo rosdep init
+rosdep update
+
+### 5. Add environment to bashrc
+echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc
+source ~/.bashrc
+
+### 6. Install ROS Python dependencies
+sudo apt install python3-rosinstall python3-rosinstall-generator python3-wstool build-essential
+
+### 7. Install rospy specifically (already included in step 3, but just in case)
+sudo apt install ros-noetic-rospy
+
+
+
+
+new_evaluate_command:
+python -m rlrd.evaluate \
+  --model checkpoints/best_model.pt \
+  --env SimEnv \
+  --episodes 3 \
+  --steps 1000 \
+  --render_mode video \
+  --log_dir /root/ws/rtrd/logs
+
+
 
 
 
