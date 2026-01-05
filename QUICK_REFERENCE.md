@@ -32,7 +32,7 @@ bash scripts/start_gazebo_headless.sh
 
 ## Terminal 2: Run Training
 
-### Setup
+### Method 1: Safe Wrapper (Recommended)
 
 ```bash
 # Attach to container
@@ -42,7 +42,40 @@ sudo docker exec -it $(sudo docker ps -qf "ancestor=rlrd-gazebo") bash
 source /opt/ros/noetic/setup.bash
 source /root/venv_rlrd/bin/activate
 cd /root/ws/rtrd
+
+# Use safe wrapper - waits for Gazebo automatically
+bash scripts/safe_train.sh checkpoints/turtlebot3_lidar_rlrd rlrd:SimTraining \
+  Env=SimEnv \
+  Env.lidar_dim=180 \
+  epochs=20 \
+  rounds=50 \
+  steps=1000 \
+  Agent.training_steps=20
 ```
+
+**Benefits:**
+- Automatically waits for Gazebo to be ready
+- No race conditions
+- Shows helpful status messages
+- Can't start training before environment ready
+
+### Method 2: Manual Check
+
+```bash
+# Attach to container
+sudo docker exec -it $(sudo docker ps -qf "ancestor=rlrd-gazebo") bash
+
+# Setup environment
+source /opt/ros/noetic/setup.bash
+source /root/venv_rlrd/bin/activate
+cd /root/ws/rtrd
+
+# Check if Gazebo ready first
+bash scripts/check_gazebo_ready.sh
+# Wait for: ✅ Gazebo is FULLY READY for training!
+```
+
+Then start training:
 
 ### RLRD (Delay-Correcting RL)
 

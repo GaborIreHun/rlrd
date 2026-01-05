@@ -39,6 +39,7 @@ sleep 3
 # Clean up stale files (don't fail on these)
 rm -rf /tmp/gazebo-* 2>/dev/null || true
 rm -rf ~/.gazebo/server-* 2>/dev/null || true
+rm -f /tmp/gazebo_ready 2>/dev/null || true  # Remove old ready signal
 echo "✓ Cleanup complete"
 
 # Now enable strict error handling for the rest of the script
@@ -478,7 +479,7 @@ if [ "$ODOM_RATE" = "unknown" ] || [ "$SCAN_RATE" = "unknown" ]; then
     while [ $ELAPSED -lt $MAX_WAIT ]; do
         # Check if both topics are now publishing
         if [ "$ODOM_RATE" = "unknown" ]; then
-            ODOM_CHECK=$(timeout 3 rostopic hz /odom 2>&1 | grep "average rate" | awk '{print $3}' || echo "")
+            ODOM_CHECK=$(timeout 3 rostopic hz /odom 2>&1 | grep "average rate" | head -1 | awk '{print $3}' || echo "")
             if [ -n "$ODOM_CHECK" ]; then
                 ODOM_RATE=$(printf "%.1f" "$ODOM_CHECK")
                 echo "  ✓ /odom started publishing at ${ODOM_RATE} Hz"
@@ -486,7 +487,7 @@ if [ "$ODOM_RATE" = "unknown" ] || [ "$SCAN_RATE" = "unknown" ]; then
         fi
         
         if [ "$SCAN_RATE" = "unknown" ]; then
-            SCAN_CHECK=$(timeout 3 rostopic hz /scan 2>&1 | grep "average rate" | awk '{print $3}' || echo "")
+            SCAN_CHECK=$(timeout 3 rostopic hz /scan 2>&1 | grep "average rate" | head -1 | awk '{print $3}' || echo "")
             if [ -n "$SCAN_CHECK" ]; then
                 SCAN_RATE=$(printf "%.1f" "$SCAN_CHECK")
                 echo "  ✓ /scan started publishing at ${SCAN_RATE} Hz"
@@ -520,9 +521,14 @@ fi
 # Show final status
 echo ""
 if [ "$ODOM_RATE" != "unknown" ] && [ "$SCAN_RATE" != "unknown" ]; then
+    # Create ready signal file
+    echo "$(date '+%Y-%m-%d %H:%M:%S')" > /tmp/gazebo_ready
+    
     echo "========================================="
     echo "✓ Gazebo is FULLY READY for training!"
     echo "========================================="
+    echo ""
+    echo "Ready signal created: /tmp/gazebo_ready"
     echo ""
 else
     echo "========================================="

@@ -558,3 +558,78 @@ All fixes implemented on: **November 26, 2025**
 4. ✅ Robot in `/gazebo/model_states`
 
 **Only proceed to 20-epoch training after all 4 criteria met!**
+
+---
+
+## Additional Fixes - Race Condition & Safety
+
+### Problem: Training Starting Before Gazebo Ready
+**New Issues Discovered:**
+- Script showed warnings but user didn't know when actually ready
+- Training started in Terminal 2 before sensors publishing
+- Race condition: No synchronization between terminals
+- Training crashed with "rospy shutdown" error
+
+### Solutions Implemented
+
+#### 1. Ready Signal File (`/tmp/gazebo_ready`)
+- Created when both `/odom` and `/scan` confirmed publishing
+- Contains timestamp of when environment became ready
+- Removed on cleanup at script start
+- Used by training wrapper to verify readiness
+
+#### 2. Status Checker Script (`scripts/check_gazebo_ready.sh`)
+**Purpose:** Quick verification of Gazebo status
+```bash
+bash scripts/check_gazebo_ready.sh
+# Returns exit 0 if ready, exit 1 if not
+```
+
+**Checks:**
+- `/tmp/gazebo_ready` file exists
+- roscore running
+- gzserver running
+- `/odom` and `/scan` topics exist
+- Topics actively publishing (2-second test)
+
+#### 3. Safe Training Wrapper (`scripts/safe_train.sh`)
+**Purpose:** Wait for Gazebo before starting training
+```bash
+bash scripts/safe_train.sh checkpoints/turtlebot3_lidar_rlrd rlrd:SimTraining \
+  Env.task=TurtleBot3Lidar Env.lidar_dim=180 ...
+```
+
+**Features:**
+- Polls `check_gazebo_ready.sh` every 5 seconds
+- Waits up to 120 seconds for Gazebo
+- Shows helpful instructions if not running
+- Only starts training after verification passed
+
+### Updated Workflow
+
+**Terminal 1 - Start Gazebo:**
+```bash
+cd /mnt/research/rtrd/rlrd
+source /opt/ros/noetic/setup.bash
+bash scripts/start_gazebo_headless.sh
+
+# Wait for: "✓ Gazebo is FULLY READY for training!"
+# This confirms /tmp/gazebo_ready file created
+```
+
+**Terminal 2 - Start Training (Safe Method):**
+```bash
+cd /mnt/research/rtrd/rlrd
+source /opt/ros/noetic/setup.bash
+source venv/bin/activate
+
+# Safe wrapper waits for Gazebo automatically
+bash scripts/safe_train.sh checkpoints/turtlebot3_lidar_rlrd rlrd:SimTraining \
+  Env=SimEnv Env.lidar_dim=180 \
+  epochs=20 rounds=50 steps=1000 Agent.training_steps=20
+```
+
+### Status: FULLY RESOLVED ✅
+
+All synchronization issues fixed. Training cannot start until Gazebo fully ready.
+

@@ -25,7 +25,7 @@ class RobotSimEnv(gym.Env):
     - Reward/done conditions are computed here.
     """
 
-    def __init__(self, seed_val=0, log_dir="/tmp", min_obs_delay=0, max_obs_delay=0, min_action_delay=0, max_action_delay=0, lidar_dim=0):
+    def __init__(self, seed_val=0, log_dir="/tmp", min_obs_delay=0, max_obs_delay=0, min_action_delay=0, max_action_delay=0, lidar_dim=0, step_duration=0.05):
         super(RobotSimEnv, self).__init__()
 
         self.min_obs_delay = min_obs_delay
@@ -69,7 +69,7 @@ class RobotSimEnv(gym.Env):
         self.prev_position = np.zeros(2, dtype=np.float32)  # For velocity calculation
         self.prev_time = time.time()
         self.done = False
-        self._step_duration = rospy.Duration(0.05)  # Simulation step size (50 ms)
+        self._step_duration = rospy.Duration(step_duration)  # Simulation step size (configurable)
 
         # === For reproducibility ===
         self.seed(seed_val)  # Set numpy RNG seed
