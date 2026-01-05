@@ -25,17 +25,26 @@ import gym.spaces
 
 class RosGymEnv(gym.Env):
     """ROS environment that follows gym interface - supports both 4D and 6D observations"""
-    def __init__(self, obs_dim=4):
+    def __init__(self, obs_dim=4, lidar_dim=0):
         super().__init__()
         self.obs_dim = obs_dim
+        self.lidar_dim = lidar_dim
         
         # Define observation space - flexible for 4D or 6D
-        self.observation_space = spaces.Box(
-            low=-np.inf, 
-            high=np.inf, 
-            shape=(obs_dim,), 
-            dtype=np.float32
-        )
+        if lidar_dim > 0:
+            self.observation_space = spaces.Box(
+                low=-np.inf,
+                high=np.inf,
+                shape=(obs_dim + lidar_dim,),
+                dtype=np.float32
+            )
+        else:
+            self.observation_space = spaces.Box(
+                low=-np.inf, 
+                high=np.inf, 
+                shape=(obs_dim,), 
+                dtype=np.float32
+            )
         
         # Define action space (2D: linear.x and angular.z)
         self.action_space = spaces.Box(
@@ -50,6 +59,11 @@ class RosGymEnv(gym.Env):
         self.cmd_pub = None
         self.odom_sub = None
         self.joint_sub = None
+
+        # LiDAR
+        self.lidar_sub = None
+        self.latest_lidar = None
+        self.lidar_dim = lidar_dim
         
         # For velocity calculation (same as SimEnv)
         self.prev_position = np.zeros(2, dtype=np.float32)
@@ -58,6 +72,17 @@ class RosGymEnv(gym.Env):
         # For 6D mode - joint state storage
         self.latest_joint_state = np.zeros(6, dtype=np.float32)
     
+    def _lidar_callback(self, msg):
+        # Store most recent LiDAR scan (ranges)
+        self.latest_lidar = np.array(msg.ranges, dtype=np.float32)
+        if self.lidar_dim > 0 and self.latest_lidar.shape[0] != self.lidar_dim:
+            # Pad or truncate to lidar_dim
+            if self.latest_lidar.shape[0] > self.lidar_dim:
+                self.latest_lidar = self.latest_lidar[:self.lidar_dim]
+            else:
+                pad = self.lidar_dim - self.latest_lidar.shape[0]
+                self.latest_lidar = np.pad(self.latest_lidar, (0, pad), 'constant', constant_values=0)
+
     def reset(self):
         # Initialize ROS nodes and subscribers if not already done
         if self.cmd_pub is None:
@@ -69,6 +94,11 @@ class RosGymEnv(gym.Env):
         if self.obs_dim == 6 and self.joint_sub is None:
             from sensor_msgs.msg import JointState
             self.joint_sub = rospy.Subscriber("/joint_states", JointState, self._joint_callback)
+
+        # LiDAR subscription
+        if self.lidar_dim > 0 and self.lidar_sub is None:
+            from sensor_msgs.msg import LaserScan
+            self.lidar_sub = rospy.Subscriber("/scan", LaserScan, self._lidar_callback)
         
         # Reset velocity tracking
         self.prev_position = np.zeros(2, dtype=np.float32)
@@ -76,10 +106,20 @@ class RosGymEnv(gym.Env):
         
         # Wait for first state
         self.latest_state = None
+        if self.lidar_dim > 0:
+            self.latest_lidar = np.zeros(self.lidar_dim, dtype=np.float32)
         while self.latest_state is None and not rospy.is_shutdown():
             rospy.sleep(0.1)
+        if self.lidar_dim > 0:
+            # Wait for first lidar
+            while self.latest_lidar is None and not rospy.is_shutdown():
+                rospy.sleep(0.05)
         
-        return self.latest_state
+        # Return stacked observation
+        if self.lidar_dim > 0:
+            return np.concatenate([self.latest_state, self.latest_lidar], dtype=np.float32)
+        else:
+            return self.latest_state
     
     def _joint_callback(self, msg):
         """Callback for joint states (6D mode)"""
@@ -133,6 +173,9 @@ class RosGymEnv(gym.Env):
             # Safety check: reject NaN or Inf values
             if not (np.any(np.isnan(obs)) or np.any(np.isinf(obs))):
                 self.latest_state = np.clip(obs, -1000.0, 1000.0)
+                # If using LiDAR, stack it
+                if self.lidar_dim > 0 and self.latest_lidar is not None:
+                    self.latest_state = np.concatenate([self.latest_state, self.latest_lidar], dtype=np.float32)
         except Exception as e:
             rospy.logwarn_throttle(1.0, f"Error in odometry callback: {e}")
         

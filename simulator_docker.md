@@ -12,10 +12,32 @@ sudo docker build -t rlrd-gazebo -f Dockerfile . --no-cache
 
 ---
 ==================================================================================
-### **Step 2: Start the Container with GUI Support (One Time Only)**
+### **Step 2: Start the Container**
 
-**This starts your main container and gives you Terminal 1:**
+**Choose ONE option based on your needs:**
 
+#### **Option A: Headless Mode (Recommended for Training)**
+
+**For CPU-only training (faster, no GUI):**
+```bash copy
+# On host - clean up any existing processes first
+sudo pkill -9 -f gzserver
+sudo pkill -9 -f gzclient
+
+# Start container without X11/display
+sudo docker run -it --rm \
+  --net=host \
+  -v /mnt/research/rtrd/rlrd:/root/ws/rtrd \
+  rlrd-gazebo
+```
+
+*This is the recommended setup for RL training - no GUI overhead, faster simulation.*
+
+---
+
+#### **Option B: GUI Mode (For Monitoring/Debugging)**
+
+**With display support (to watch the simulation):**
 ```bash copy
 xhost +local:root
 sudo docker run -it --rm \
@@ -26,7 +48,7 @@ sudo docker run -it --rm \
   rlrd-gazebo
 ```
 
-**With GPU**
+**With GPU acceleration:**
 ```bash copy
 xhost +local:root
 sudo docker run -it --rm \
@@ -40,7 +62,12 @@ sudo docker run -it --rm \
 
 *Gives you a shell inside the running container, with code mounted and GUI working.*
 
-**⚠️ Important:** Only run this **once**! For additional terminals, use Step 3 below.
+---
+
+**⚠️ Important:** 
+- Only run `docker run` **once**! For additional terminals, use Step 3 below.
+- If using `--net=host`, only ONE container can run Gazebo at a time (port conflict)
+- Always clean up old gzserver processes before starting: `sudo pkill -9 -f gzserver`
 
 ---
 
@@ -72,8 +99,40 @@ cd /root/ws/rtrd
 
 #### **Container Terminal 1: Launch Gazebo Simulator**
 
+**For GUI (visual monitoring):**
 ```bash copy
 roslaunch turtlebot3_gazebo turtlebot3_world.launch
+```
+
+**For Headless Training (faster, recommended):**
+```bash copy
+# Use the helper script for reliable headless startup
+source /opt/ros/noetic/setup.bash
+bash /root/ws/rtrd/scripts/start_gazebo_headless.sh
+```
+
+*The script will automatically start roscore, gzserver, spawn the robot, and verify all services are ready.*
+
+**Alternative manual headless method:**
+```bash copy
+source /opt/ros/noetic/setup.bash
+export TURTLEBOT3_MODEL=burger
+
+# Start roscore if not running
+roscore > /tmp/roscore.log 2>&1 &
+sleep 3
+
+# Start gzserver without GUI
+WORLD=$(rospack find turtlebot3_gazebo)/worlds/turtlebot3_world.world
+gzserver -s libgazebo_ros_init.so -s libgazebo_ros_factory.so "$WORLD" > /tmp/gzserver.log 2>&1 &
+sleep 5
+
+# Spawn robot
+rosrun gazebo_ros spawn_model -urdf -model turtlebot3_burger -x -2.0 -y -0.5 -z 0.0 -param robot_description &
+sleep 3
+
+# Verify services are ready
+rosservice list | grep gazebo
 ```
 
 *Wait for Gazebo to fully load before proceeding to Terminal 2*
@@ -180,6 +239,27 @@ python3 -m rlrd run rlrd:DcacTraining \
     rounds=30 \
     steps=500 \
     tag=turtlebot3_training
+```
+
+**Running with Lidar**
+
+```bash copy
+python3 -m rlrd run-fs checkpoints/turtlebot3_lidar rlrd:SimTraining \
+    Env=SimEnv \
+    Env.lidar_dim=180 \
+    Env.min_observation_delay=0 \
+    Env.sup_observation_delay=2 \
+    Env.min_action_delay=0 \
+    Env.sup_action_delay=3 \
+    Agent.batchsize=128 \
+    Agent.memory_size=1000000 \
+    Agent.lr=0.0003 \
+    Agent.discount=0.99 \
+    Agent.device=cpu \
+    epochs=20 \
+    rounds=50 \
+    steps=1000 \
+    tag=turtlebot3_lidar
 ```
 
 *Training will save models to checkpoint directory:*
@@ -330,3 +410,184 @@ rostopic echo /odom
 - ⚠️ Old `.pt` files from previous training won't work well (different observations)
 
 ---
+
+## **Troubleshooting**
+
+### **Problem: "Unable to start server [bind: Address already in use]"**
+
+**Symptom:** gzserver fails to start with error:
+```
+[Err] [Master.cc:96] EXCEPTION: Unable to start server[bind: Address already in use]
+```
+
+**Root Cause:** Another gzserver is already running (on host or in another container) using port 11345.
+
+**Solution:**
+
+**On the HOST machine (not inside container):**
+```bash
+# Find what's using port 11345
+sudo ss -tlnp | grep 11345
+
+# Kill all Gazebo processes
+sudo pkill -9 -f gzserver
+sudo pkill -9 -f gzclient
+
+# Verify port is free
+sudo ss -tlnp | grep 11345  # should return nothing
+```
+
+**Then restart your container and try again.**
+
+**Prevention:** 
+- When using `--net=host`, only run ONE container with Gazebo at a time
+- Always clean up before starting: `sudo pkill -9 -f gzserver` on the HOST
+- The helper script (`start_gazebo_headless.sh`) automatically checks for port conflicts
+
+---
+
+### **Problem: "Failed to connect to Gazebo reset service"**
+
+**Symptom:** Training fails with error:
+```
+RuntimeError: Gazebo simulation not available. Please restart Gazebo and try again.
+```
+
+**Solution:**
+1. Check if gzserver is actually running:
+   ```bash
+   ps aux | grep gzserver | grep -v grep
+   ```
+
+2. Check if Gazebo services are available:
+   ```bash
+   rosservice list | grep gazebo
+   ```
+   You should see services like `/gazebo/reset_simulation`, `/gazebo/pause_physics`, etc.
+
+3. If services are missing, check gzserver log:
+   ```bash
+   tail -n 100 /tmp/gzserver.log
+   ```
+
+4. Common fixes:
+   - **gzserver crashed:** Look for "Aborted" or "core dumped" in logs. This usually means:
+     - Missing `robot_description` parameter (spawn robot first)
+     - GPU/display issues (use `LIBGL_ALWAYS_SOFTWARE=1` if needed)
+     - Insufficient memory
+   
+   - **Services not registering:** Restart with the helper script:
+     ```bash
+     pkill -f gzserver; pkill -f roscore
+     source /opt/ros/noetic/setup.bash
+     bash /root/ws/rtrd/scripts/start_gazebo_headless.sh
+     ```
+
+### **Problem: GUI still appears when trying headless**
+
+**Solution:**
+1. Make sure `DISPLAY` is unset:
+   ```bash
+   unset DISPLAY
+   echo $DISPLAY  # should be empty
+   ```
+
+2. Or start container without X11 forwarding:
+   ```bash
+   # On host (no -e DISPLAY, no -v /tmp/.X11-unix)
+   sudo docker run -it --rm --net=host \
+     -v /mnt/research/rtrd/rlrd:/root/ws/rtrd \
+     rlrd-gazebo
+   ```
+
+3. Kill gzclient if it's running:
+   ```bash
+   pkill -f gzclient
+   ```
+
+### **Problem: Training is slow**
+
+**Solutions:**
+1. **Use headless mode** (biggest speedup):
+   ```bash
+   bash /root/ws/rtrd/scripts/start_gazebo_headless.sh
+   ```
+
+2. **Reduce physics accuracy** (edit world file or set):
+   ```bash
+   export GAZEBO_REAL_TIME_UPDATE_RATE=100  # default 1000
+   ```
+
+3. **Use GPU acceleration** (if available):
+   ```bash
+   # Start container with GPU
+   sudo docker run -it --rm --gpus all --net=host \
+     -v /mnt/research/rtrd/rlrd:/root/ws/rtrd \
+     rlrd-gazebo
+   ```
+
+4. **Reduce sensor data** (if not using LiDAR):
+   - Comment out LiDAR in training config or set `Env.lidar_dim=0`
+
+### **Problem: Container exits immediately**
+
+**Symptom:** `docker run` command exits with code 125
+
+**Solution:**
+Check for typos in the command. Common issue:
+```bash
+# WRONG (typo: rlrd-gazeb)
+rlrd-gazeb
+
+# CORRECT
+rlrd-gazebo
+```
+
+### **Problem: ROS nodes can't find each other**
+
+**Solution:**
+1. Ensure all terminals source ROS:
+   ```bash
+   source /opt/ros/noetic/setup.bash
+   ```
+
+2. Check ROS_MASTER_URI:
+   ```bash
+   echo $ROS_MASTER_URI  # should be http://localhost:11311
+   ```
+
+3. List active nodes:
+   ```bash
+   rosnode list
+   ```
+
+4. Check network connectivity:
+   ```bash
+   rostopic list
+   rostopic hz /odom  # should show ~50-100 Hz
+   ```
+
+---
+
+
+terminal 1:
+
+sudo docker run -it --rm \
+  --net=host \
+  -v /mnt/research/rtrd/rlrd:/root/ws/rtrd \
+  rlrd-gazebo
+source /opt/ros/noetic/setup.bash
+bash /root/ws/rtrd/scripts/start_gazebo_headless.sh
+
+
+terminal 2:
+
+sudo docker exec -it $(docker ps -qf "ancestor=rlrd-gazebo") bash
+source /opt/ros/noetic/setup.bash
+source /root/venv_rlrd/bin/activate
+cd /root/ws/rtrd
+python3 -m rlrd run-fs checkpoints/turtlebot3_lidar rlrd:SimTraining
+
+
+
+Found world file: /opt/ros/noetic/share/turtlebot3_gazebo/worlds/turtlebot3_world.world

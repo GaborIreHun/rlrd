@@ -216,7 +216,7 @@ class MazeToSimBridge:
 class SimController:
     """Controller for TurtleBot3 using maze-trained agent"""
     
-    def __init__(self, checkpoint_path):
+    def __init__(self, checkpoint_path, lidar_dim=0):
         if not ROS_AVAILABLE:
             raise RuntimeError("ROS is required for SimController but is not available")
         
@@ -227,14 +227,37 @@ class SimController:
         # ROS setup
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
         self.odom_sub = rospy.Subscriber('/odom', Odometry, self._odom_callback)
+
+        # LiDAR
+        self.lidar_dim = lidar_dim
+        self.lidar_sub = None
+        self.latest_lidar = None
+        if self.lidar_dim > 0:
+            self.lidar_sub = rospy.Subscriber('/scan', LaserScan, self._lidar_callback)
         
         # State tracking
         self.current_odom = None
         self.last_odom = None
         self.last_time = None
         self.control_rate = rospy.Rate(10)  # 10 Hz
+
+        # For collision recovery
+        self.stuck_counter = 0
+        self.collision_counter = 0
+        self.last_position = None
+        self.recovery_mode = False
         
         print("\nSimController initialized with ROS")
+
+    def _lidar_callback(self, msg):
+        self.latest_lidar = np.array(msg.ranges, dtype=np.float32)
+        if self.lidar_dim > 0 and self.latest_lidar.shape[0] != self.lidar_dim:
+            # Pad or truncate
+            if self.latest_lidar.shape[0] > self.lidar_dim:
+                self.latest_lidar = self.latest_lidar[:self.lidar_dim]
+            else:
+                pad = self.lidar_dim - self.latest_lidar.shape[0]
+                self.latest_lidar = np.pad(self.latest_lidar, (0, pad), 'constant', constant_values=0)
     
     def _odom_callback(self, msg):
         """Store odometry data"""
@@ -338,42 +361,72 @@ class SimController:
         self.cmd_vel_pub.publish(cmd)
     
     def run(self):
-        """Main control loop"""
+        """Main control loop with simple collision recovery"""
         print("\nWaiting for odometry data...")
-        
         # Wait for first odometry message
         while self.current_odom is None and not rospy.is_shutdown():
             rospy.sleep(0.1)
-        
         print("Odometry received. Starting control loop...\n")
-        
         step_count = 0
+        stuck_threshold = 0.03  # m/s, below this is considered stuck
+        stuck_steps = 15        # number of steps below threshold before recovery
+        collision_dist = 0.18  # meters, LiDAR detects obstacle closer than this
+        collision_steps = 3    # consecutive steps with close obstacle
+        recovery_steps = 15    # steps to perform recovery
+        recovery_mode = False
+        recovery_counter = 0
+        last_position = None
+        stuck_counter = 0
+        collision_counter = 0
         while not rospy.is_shutdown():
             # Get TurtleBot3 state
             turtlebot_obs = self._get_turtlebot_state()
-            
             if turtlebot_obs is not None:
-                # Check if we need to translate observation format
-                # PointMaze agents expect [x, y, vel_x, vel_y]
-                # SimEnv agents expect [x, y, theta, vel] directly
-                
+                # --- Collision/stuck detection ---
+                # 1. Stuck: velocity very low for several steps
+                vel = turtlebot_obs[3]
+                if abs(vel) < stuck_threshold:
+                    stuck_counter += 1
+                else:
+                    stuck_counter = 0
+                # 2. Collision: LiDAR sees close obstacle
+                if self.lidar_dim > 0 and self.latest_lidar is not None:
+                    min_dist = np.min(self.latest_lidar)
+                    if min_dist < collision_dist:
+                        collision_counter += 1
+                    else:
+                        collision_counter = 0
+                # Enter recovery if needed
+                if not recovery_mode and (stuck_counter >= stuck_steps or collision_counter >= collision_steps):
+                    print("[RECOVERY] Triggered: Stuck or collision detected.")
+                    recovery_mode = True
+                    recovery_counter = 0
+                # --- Recovery behavior ---
+                if recovery_mode:
+                    # Simple: reverse and rotate
+                    reverse_speed = -0.10
+                    rotate_speed = 1.0
+                    if recovery_counter < recovery_steps // 2:
+                        self._publish_action(reverse_speed, 0.0)
+                    else:
+                        self._publish_action(0.0, rotate_speed)
+                    recovery_counter += 1
+                    if recovery_counter >= recovery_steps:
+                        print("[RECOVERY] Complete. Resuming policy.")
+                        recovery_mode = False
+                        stuck_counter = 0
+                        collision_counter = 0
+                    self.control_rate.sleep()
+                    step_count += 1
+                    continue
+                # --- Normal policy ---
                 if self.bridge.expects_pointmaze_obs:
-                    # Translate to PointMaze observation format
                     agent_obs = self.translate_observation(turtlebot_obs)
                 else:
-                    # Use TurtleBot3 observation directly (SimEnv format)
                     agent_obs = turtlebot_obs
-                
-                # Get action from model
                 action = self.bridge.get_action(agent_obs)
-                
-                # Translate to TurtleBot3 command
                 linear_x, angular_z = self.translate_action(action)
-                
-                # Publish command
                 self._publish_action(linear_x, angular_z)
-                
-                # Logging
                 if step_count % 100 == 0:
                     print(f"\nStep {step_count}")
                     print(f"TurtleBot3: pos=({turtlebot_obs[0]:.3f}, {turtlebot_obs[1]:.3f}), "
@@ -386,9 +439,7 @@ class SimController:
                               f"theta={agent_obs[2]:.3f}, vel={agent_obs[3]:.3f}")
                     print(f"Action:     force=({action[0]:.3f}, {action[1]:.3f})")
                     print(f"Command:    linear={linear_x:.3f}, angular={angular_z:.3f}")
-                
                 step_count += 1
-            
             self.control_rate.sleep()
 
 

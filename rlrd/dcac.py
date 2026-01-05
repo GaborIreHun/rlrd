@@ -182,8 +182,10 @@ class Agent(rlrd.sac.Agent):
             nstep_len = ones_tens * (self.act_buf_size - 1)
             for i in reversed(range(self.act_buf_size)):  # we don't care about the delay of the first observation in the trajectory, but we care about the last one
                 obs_del = augm_obs_traj[i + 1][2]  # observation delay (alpha)
-                act_del = augm_obs_traj[i + 1][4]  # action_delay (beta)
+                act_del = augm_obs_traj[i + 1][3]  # action_delay (beta) - FIXED: was [4], should be [3]
                 tot_del = obs_del + act_del
+                # Ensure minimum total delay of 1 (DCAC requirement)
+                tot_del = torch.clamp(tot_del, min=1)
                 # TODO: the last iteration is useless
                 nstep_len = torch.where((tot_del <= i), ones_tens * (i - 1), nstep_len)
             nstep_max_len = torch.max(nstep_len)
